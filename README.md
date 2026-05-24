@@ -1,85 +1,168 @@
 # 🌿 Nai
 
-### Naive Agentic Workflow
+### Naive Agentic Infrastructure
 
-A self-installing, agent-driven delivery workflow that scaffolds itself from a
-single specification prompt — no CLI to install, no package to download. You
-hand the spec to any AI coding agent and it builds the workflow on your
-machine, adapted to your language, OS, scripting language, and AI harness.
+A self-installing, agent-driven delivery workflow. There is no CLI to
+install and no package to download — you hand a single specification
+prompt ([INSTALL.md](INSTALL.md)) to any capable AI coding agent and it
+scaffolds the whole infrastructure on your machine, adapted to your
+language, OS, scripting runtime, and AI harness.
 
----
-
-## 🤔 What is Nai?
-
-Nai (from *naive*) is a deliberately minimal agentic workflow. Instead of
-shipping binaries or templates, it ships **one prompt**
-([INSTALL.md](INSTALL.md)) that fully specifies how to scaffold the workflow.
-Any reasonably capable AI agent can read that prompt and produce a complete,
-working installation on disk.
-
-The resulting workflow gives you:
-
-- A **single top-level launcher** that opens an AI agent in the right mode
-  (first run: installer; subsequent runs: workspace orchestrator).
-- **Workspaces** — isolated, git-worktree-backed task contexts copied from
-  a template, each with its own prompts, artifacts, and per-agent launchers.
-- A **markdown-backed work queue** (`Next` → `Current` → `Done`, with
-  `Blocked` for failures) where each task is a chunk separated by `---`.
-- A **dispatcher + worker wrapper** indirection so any AI harness
-  (`opencode`, `claude`, etc.) can be plugged in without touching the rest
-  of the workflow.
-- **Safe rollback**: every completed task carries a per-repository commit
-  hash in its header so `Work - Undo` can hard-reset the worktrees.
-- **Archive-only removal**: workspaces are never deleted, only moved to
-  `Workspaces/__archive__/`.
+This README describes **what you end up with after installation** and
+**how to live with it day to day**. For the underlying spec, see
+[INSTALL.md](INSTALL.md).
 
 ---
 
-## ⚡ Install
+## ⚡ Install in one step
 
-Open any AI coding agent (Claude Code, opencode, Codex, Copilot Chat, etc.)
-in an empty directory and send it this message:
+Open any AI coding agent (Claude Code, opencode, Codex, Copilot Chat, …)
+in an empty directory and send it one message:
 
 > Please read <https://raw.githubusercontent.com/piontkovsk11andre1/nai/main/INSTALL.md>
 > and implement the workflow.
 
-That's it. The agent will:
-
-1. Ask which natural language to use.
-2. Ask about your OS, scripting language, install path, and AI harness.
-3. Scaffold every file from the spec into the chosen directory.
-4. Verify the scaffold and hand control back to you.
-
-Your next action is to open the generated top-level launcher
-(`Open Agent.lnk` / `Open Agent.command` / `Open Agent.desktop`). It will
-spawn the **Installation Agent**, which finalizes git repositories, naming
-conventions, framework mapping, and external issue-tracker wiring — then
-flips the same launcher to open the **Workspace Agent** from then on.
+The agent will interview you (natural language, OS, scripting language,
+install path, AI harness), scaffold every file, run a verification pass,
+and stop. Your next action is to **double-click the top-level launcher**
+it produced.
 
 ---
 
-## 🔁 Lifecycle
+## 📦 What you get on disk
 
-1. **First launch** → top-level launcher opens the *Installation Agent*.
-   It walks you through repo initialization, conventions, and verifies the
-   install. As its last step it rewrites the launcher to point at the
-   *Workspace Agent*.
-2. **Every launch after that** → top-level launcher opens the *Workspace
-   Agent*. From there you create workspaces, archive workspaces, or open
-   per-workspace agents.
-3. **Inside a workspace** → five numbered launchers open the per-workspace
-   agents: Git, Research, Planner, Worker, Reviewer. The Worker drives the
-   markdown work queue via `Work - Do` and `Work - Undo`.
-4. **Wrap up** → Reviewer produces `Changelog.md` and `PR.md`; Git Agent
-   syncs them into the global `Workspaces/Backlog.md` /
-   `Workspaces/Changelog.md`; `Workspace - Remove --synced` archives the
-   workspace under `Workspaces/__archive__/`.
+After scaffolding finishes, the install path looks roughly like this:
+
+```
+Open Agent.(lnk|command|desktop)     ← top-level launcher
+Prompts/
+  Installation Agent.md              ← runs on first launch
+  Workspace Agent.md                 ← runs from second launch onward
+Scripts/
+  Agent.<ext>                        ← dispatcher
+  Workspace - Create.<ext>
+  Workspace - Remove.<ext>
+  Work - Do.<ext>
+  Work - Undo.<ext>
+  WorkflowLog.<ext>
+  Workers/
+    Default.<ext>                    ← wrapper around your AI harness
+Workspaces/
+  Backlog.md, Changelog.md
+  __archive__/                       ← archived workspaces land here
+  __template__/                      ← cloned for every new workspace
+    Configuration/  Documentation/  Implementation/
+    Workspace.md  Plan.md  Issue.md  Status.md  …
+    Prompts/   (Git / Research / Planner / Worker / Reviewer)
+    Work/      (Next / Current / Blocked / Done .md)
+```
+
+Concretely, you get:
+
+- **One launcher** at the top that opens an AI agent in the right mode.
+- **A `Default` worker wrapper** that already knows how to call your AI
+  harness in both unattended (`cli`) and interactive (`tui`) modes.
+- **A workspace template** with per-agent prompts, per-agent launchers,
+  and a markdown-backed work queue.
+- **A scripts layer** (`Workspace - Create / Remove`, `Work - Do / Undo`,
+  dispatcher) — small, non-interactive, fail-loud on missing flags.
+
+Everything is in your chosen natural language; only protocol literals
+(`PASS`, `FAIL:`, `---`, CLI flag names, header markers) stay ASCII.
+
+---
+
+## 🚀 First launch vs. every launch after
+
+The top-level launcher is the only thing you interact with from the
+filesystem. Its behavior changes once:
+
+1. **First launch** → opens the **Installation Agent**. It finalizes the
+   parts that were intentionally deferred during scaffolding: template
+   git repositories (and their initial commits), workspace naming and
+   branch conventions, optional framework mapping, and external issue
+   tracker wiring. As its last step it **rewrites the launcher itself**
+   to point at the Workspace Agent.
+2. **Every launch after** → opens the **Workspace Agent**, which is your
+   day-to-day orchestrator: create a workspace, archive a workspace, or
+   open a per-workspace agent.
+
+The launcher file name never changes; only the prompt it targets does.
+
+---
+
+## 🧑‍💻 Day-to-day usage
+
+### Create a workspace
+
+Ask the Workspace Agent:
+
+> Create a workspace for ticket `FOO-123` about the auth refactor.
+
+It calls `Scripts/Workspace - Create` with a `--workspace` path and a
+`--branch` name. The script:
+
+- copies `Workspaces/__template__/` into the new workspace path,
+- attaches each template repo as a **git worktree** on the requested
+  branch (creating the branch if needed),
+- drops five numbered launchers inside the workspace:
+  `1. Open Git Agent`, `2. Open Research Agent`, `3. Open Planner
+  Agent`, `4. Open Worker Agent`, `5. Open Reviewer Agent`.
+
+### Work inside a workspace
+
+Open the launcher for the role you need. The intended flow:
+
+- **Research Agent** — asks for pre-context, then asks one question at a
+  time, writes findings into `Research.md`.
+- **Planner Agent** — reads `Issue` / `Research` / `Notes` / etc.,
+  produces `Plan.md` and a `Status.md` table.
+- **Worker Agent** — derives actionable chunks into `Work/Next.md` (one
+  blank-line-separated chunk per task, `---` between them), then drives
+  the work queue.
+- **Reviewer Agent** — writes `Changelog.md` and `PR.md`.
+- **Git Agent** — finalizes commits, syncs the workspace's
+  `Backlog` / `Changelog` into the global files in `Workspaces/`, and
+  handles explicit git operations on request.
+
+### Run the work queue
+
+The Worker Agent (or you, directly) invokes:
+
+- `Scripts/Work - Do` — moves the next chunk through
+  `Next` → `Current` → `Done` (or `Blocked` on failure). Before
+  executing, it captures a `<!-- rollback: RepoA=<hash> RepoB=<hash> -->`
+  header so the chunk can be safely rolled back later. The verifier's
+  last non-empty line must be exactly `PASS` or `FAIL: <one-line
+  reason>`. Anything else is treated as a blocked-with-reason chunk.
+- `Scripts/Work - Undo --count N` — `git reset --hard` + `git clean
+  -fdx` on every repo recorded in the rollback headers of the last N
+  done chunks, then returns those chunks to the top of `Next`.
+
+`Work - Do` and `Work - Undo` are deliberately **non-interactive**: a
+missing decision flag (e.g. `--blocked-action`, `--current-action`,
+`--count`) makes the script exit non-zero with a message naming the
+exact flag to add.
+
+### Archive a workspace
+
+When the work has shipped:
+
+```
+Scripts/Workspace - Remove --workspace <path> --synced
+```
+
+`--synced` is mandatory — it forces you to run the Git Agent's
+backlog/changelog sync first. The script then moves everything to
+`Workspaces/__archive__/<same-path>/`, detaches the worktrees, and
+prunes stale worktree records. **Nothing is ever deleted.**
 
 ---
 
 ## 🧭 Dispatcher contract
 
-Everything flows through a single dispatcher script (`Scripts/Agent.<ext>`):
+Every launcher and every script ultimately calls a single dispatcher
+(`Scripts/Agent.<ext>`) with these flags:
 
 | Flag | Purpose |
 |------|---------|
@@ -93,70 +176,48 @@ Everything flows through a single dispatcher script (`Scripts/Agent.<ext>`):
 | `--dry-run` | Print the harness command instead of running it. |
 | `--new-window` | Windows TUI hint: spawn detached console and return. |
 
----
-
-## 📋 Work queue
-
-Inside every workspace, `Work/` holds exactly four files:
-
-- `Next.md` — chunks waiting to be executed.
-- `Current.md` — the chunk currently in flight (carries the rollback header).
-- `Blocked.md` — chunks the verifier rejected (carries a blocked-reason header).
-- `Done.md` — finished chunks (rollback header preserved for `Work - Undo`).
-
-Chunks are separated by a single line containing `---`. Empty chunks are
-ignored. `PASS` and `FAIL: <one-line reason>` are the **only** literal
-ASCII tokens the verifier may emit on its last non-empty line.
+The dispatcher does nothing else — it validates `--prompt`, resolves the
+worker, and forwards. Swapping AI harnesses is just a matter of adding a
+new file under `Scripts/Workers/`.
 
 ---
 
-## 🛡️ Safety notes
+## 🛡️ Safety guarantees
 
-- **No remote push, ever**, unless you explicitly ask for it. Pulling is
-  fine; pushing is your call.
-- **Workspaces are archived, never deleted.** `Workspace - Remove` refuses
-  to run without `--synced`, and it moves files into
-  `Workspaces/__archive__/`.
-- **`Work - Undo` is destructive by design** — it runs `git reset --hard`
-  and `git clean -fdx` on the affected repos. Dirty work trees are erased.
-- **Scripts are non-interactive.** Missing arguments cause a clean
-  non-zero exit with a message naming the exact flag to add.
-
----
-
-## 🧩 Scripts
-
-| Script | One-line purpose |
-|--------|------------------|
-| `Scripts/Agent.<ext>` | Dispatcher — resolves a worker and forwards args. |
-| `Scripts/Workers/Default.<ext>` | Worker wrapper for the configured AI harness. |
-| `Scripts/Workspace - Create.<ext>` | Copy template, attach git worktrees, emit per-agent launchers. |
-| `Scripts/Workspace - Remove.<ext>` | Archive a workspace under `__archive__/`. |
-| `Scripts/Work - Do.<ext>` | Drive the `Next` → `Current` → `Done` / `Blocked` state machine. |
-| `Scripts/Work - Undo.<ext>` | Roll back the last N done chunks via captured commit hashes. |
-| `Scripts/WorkflowLog.<ext>` | Shared best-effort UTF-8 log helper. |
+- **No remote push, ever**, unless you explicitly ask for it.
+- **Workspaces are archived, never deleted.** `Workspace - Remove`
+  refuses to run without `--synced`.
+- **`Work - Undo` is destructive by design** — `git reset --hard` plus
+  `git clean -fdx`. Dirty work trees on rolled-back repos are erased.
+  That is the price of the safety net.
+- **Scripts are non-interactive.** Missing arguments fail with a clean
+  non-zero exit and a message naming the exact flag.
+- **UTF-8 end to end**, including the Windows console code page, so
+  translated strings survive every subprocess hop.
 
 ---
 
-## 🎨 Adaptation
+## 🎨 What's adaptable
 
-Everything is adjustable at install time:
+Decided at install time, never hard-coded:
 
-- **Natural language** — every generated artifact, comment, and printed
-  message is translated. Protocol literals (`PASS`, `FAIL:`, `---`, flag
-  names, header markers) stay ASCII.
+- **Natural language** — every prompt, comment, and printed message is
+  translated. Protocol literals stay ASCII.
 - **OS** — Windows (`.lnk`), macOS (`.command`), Linux (`.desktop`).
-- **Scripting language** — Python (default, stdlib only), Bash, Node.js, Go.
-- **AI harness** — `opencode` by default; the installer derives invocation
-  patterns from `<harness> --help` and writes a working wrapper.
+- **Scripting language** — Python (default, stdlib only), Bash, Node.js,
+  Go.
+- **AI harness** — `opencode` by default; the installer derives
+  invocation patterns from `<harness> --help` and writes a working
+  wrapper. Additional wrappers can be added later under
+  `Scripts/Workers/`.
 
-The full specification — invariants, adaptation surfaces, per-file specs,
-per-script behavior, launcher recipes, harness guide, verification
-checklist — lives in [INSTALL.md](INSTALL.md). That file is the single
-source of truth; this README only orients newcomers.
+The full specification — invariants, per-file specs, per-script
+behavior, launcher recipes, harness guide, verification checklist —
+lives in [INSTALL.md](INSTALL.md). That file is the single source of
+truth; this README only orients you once the scaffolding is on disk.
 
 ---
 
 ## 📄 License
 
-See [LICENSE](LICENSE) if present in this repository.
+[MIT](LICENSE).
