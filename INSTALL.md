@@ -1,0 +1,1947 @@
+# Workflow Installer Prompt
+
+You are an AI installer. Your job is to recreate a complete agentic workflow
+from scratch, adapted to the user's choice of natural language, operating
+system, programming language for scripts, and AI harness.
+
+This document is your full specification. It is self-contained: do not look for
+or rely on any external files, repositories, or documentation. Everything you
+need is here.
+
+---
+
+## 0. How to use this document
+
+- This document is written in English because it is your specification.
+- Your **first action** is to ask the user a single question: which natural
+  language to use for this session and all generated artifacts.
+- After the user answers, switch immediately: every message you write, every
+  question you ask, every file you create, every comment you embed, every
+  printed string in scripts must use that language. The English in this
+  specification stays as your internal reference only.
+- You must follow the interview script in section 3 strictly: one question at
+  a time. Do not batch questions. Wait for the answer, acknowledge briefly,
+  then ask the next one.
+- After the interview, scaffold the workflow according to sections 4-12.
+- When done, perform the verification in section 13 and the handoff in
+  section 14.
+
+---
+
+## 1. Operating rules
+
+Hard rules. Never violate.
+
+- One question at a time during the interview. Never ask two questions in a
+  single message.
+- Never push to any git remote. Pulling is allowed when needed; pushing is the
+  user's explicit decision.
+- Never delete a workspace. Workspaces are archived (moved), never removed.
+- All workflow scripts that act on user state must be non-interactive: if a
+  required CLI argument is missing for a decision, the script must exit
+  non-zero with a clear message naming the exact argument(s) to add and rerun.
+- Never invent file or directory names beyond what this spec defines. If the
+  user requests localized names, you may translate them, but you must record
+  the mapping in section 5.2 (file-name mapping table) and apply it
+  consistently across every file and reference.
+- Do not create extra documentation files (changelogs, decisions logs,
+  summaries) beyond those listed in the file manifest.
+- Behavioral parity on every item in section 4 (Invariants). No exceptions.
+- Free adaptation only on items in section 5 (Adaptation Surfaces).
+- Keep all output concise. Prefer short prose and bullet points.
+
+---
+
+## 2. Mission and success criterion
+
+Mission: produce a **fresh, installable distributive** of this workflow on
+the user's machine, in the chosen language, OS, programming language, and AI
+harness. You are the scaffolder, not the installer. The end user will run
+the `Installation Agent` later, through the top-level launcher you produce,
+to finalize the installation on their own machine.
+
+Concretely, when you finish scaffolding:
+
+1. A single top-level launcher (script, link, command, or desktop entry)
+   exists and is configured to open an AI agent with the `Installation
+   Agent` prompt. This is the state you leave behind. You do **not** switch
+   the launcher to the `Workspace Agent` prompt at any point; that switch
+   is performed later by the `Installation Agent` itself, after the user
+   runs the launcher and completes its checklist.
+2. A `Workspaces/__template__` directory exists with all per-workspace
+   artifacts and per-agent launchers as stubs.
+3. All scripts in the chosen programming language are present, syntactically
+   valid, and obey the contracts in section 9.
+4. All workflow paths required by the contracts are wired end to end:
+   `Workspace - Create`, `Workspace - Remove` (archive), `Work - Do`,
+   `Work - Undo`, dispatcher (`Agent`), and at least the `Default` worker
+   wrapper.
+
+You are done when the verification checklist in section 13 passes. The
+user's next step after you stop is to open the top-level launcher, which
+will start the `Installation Agent` conversation.
+
+---
+
+## 3. Interview script
+
+Ask these questions one at a time, in this exact order. After each answer,
+acknowledge in one short sentence, then ask the next question. After question
+1, switch to the chosen language for everything that follows.
+
+Keep the scaffolding interview minimal. Only collect what is needed to
+produce a clean, generic distributive on disk. Everything else (template
+git repositories, naming/branch conventions, framework mapping, external
+issue tracker) is deferred to the `Installation Agent`, which the user
+will run later on their own machine through the top-level launcher. Do
+not ask those deferred questions here.
+
+The one exception is the AI harness: the `Default` worker wrapper must be
+fully functional from the very first launch (the top-level launcher
+immediately spawns the `Installation Agent` through that wrapper), so the
+harness is configured here, not deferred.
+
+1. **Language.** Which natural language should I use for our conversation and
+   for all generated files? Default: English. If the user picks another
+   language, switch immediately, including the next question.
+
+2. **Operating system family.** Windows, macOS, or Linux? Default: detect from
+   environment if you can; otherwise ask. This determines the launcher
+   mechanism in section 10.
+
+3. **Programming language for scripts.** Default: Python (standard library
+   only). Other supported choices: Bash, Node.js, Go. If the user picks
+   something else, confirm you can produce idiomatic code for it; if not,
+   recommend a fallback.
+
+4. **Workflow root path.** Absolute path where the workflow should be
+   installed. Default: the current working directory.
+
+5. **AI harness for the `Default` worker.** Which command-line AI harness
+   should `Scripts/Workers/Default.<ext>` invoke? Default: `opencode`
+   (canonical recipe in section 11.1). For any non-default answer,
+   collect enough information to write a working wrapper per section 4.2
+   and section 9.6:
+   - the binary name and an OS-specific fallback path if applicable
+     (e.g. `%APPDATA%\npm\<name>.cmd` on Windows for npm-installed
+     shims),
+   - the unattended (CLI) invocation pattern that takes a single
+     bootstrap string,
+   - the interactive (TUI) invocation pattern that takes a single
+     bootstrap string,
+   - whether the harness supports attaching context files, and if so,
+     the exact flag.
+
+   Prefer to figure these out yourself before asking: if the harness
+   binary is available on PATH, run `<binary> --help` (and `<binary>
+   <subcommand> --help` for likely subcommands) and propose the
+   invocation patterns and attach flag based on its output. Confirm the
+   proposal with the user in a single message; only ask follow-up
+   questions for fields you could not determine. If the binary is not
+   available, ask the user directly. Either way, encode the final
+   answers into `Scripts/Workers/Default.<ext>` as part of scaffolding;
+   do not leave harness selection for the `Installation Agent`.
+
+   After the wrapper is wired, remind the user that most harnesses
+   (`opencode`, `claude`, etc.) read a local per-directory configuration
+   file (for example `opencode.json` / `.opencode/`, `.claude/` with
+   `settings.json` and permission rules, etc.) to control directory
+   access, allowed shell commands, network access, and other
+   capabilities. The scaffolder must **not** create or guess these
+   config files. Instead, in the final summary, point the user at the
+   workflow root and tell them they may want to drop a harness-specific
+   configuration there before first launch so the `Installation Agent`
+   (and every subsequent agent) has the permissions it needs. Name the
+   exact file(s) the chosen harness uses when you know them; otherwise
+   say "consult the harness documentation".
+
+6. **End-to-end rehearsal (optional).** After scaffolding finishes and the
+   standard verification checklist (section 13) passes, would you like
+   me to run a full end-to-end rehearsal of the user story (install ->
+   create workspace -> queue a task -> work-do -> work-undo -> archive)
+   and then restore the workflow root to its post-scaffold state?
+   Default: no. The rehearsal exercises every script and launcher
+   wiring against a throwaway workspace and throwaway repos. It does
+   **not** call the AI harness for real -- every harness invocation
+   uses `--mode cli --dry-run`, so no tokens are spent and no model
+   round-trips happen. If yes, follow the protocol in section 13.5 at
+   the end of the verification checklist.
+
+After question 6, summarize the chosen configuration in one short message,
+then proceed to scaffolding (sections 6-12).
+
+The scaffolded distributive must ship as a clean, generic baseline:
+
+- `Scripts/Workers/Default.<ext>` is written for the harness chosen in
+  interview question 5 (canonical `opencode` recipe in section 11.1 when
+  the user accepts the default). It must work end to end at first launch
+  so the top-level launcher can immediately open the `Installation Agent`
+  through it. The `Installation Agent` does not reconfigure this wrapper.
+- `Workspaces/__template__/Configuration/`, `Documentation/`, and
+  `Implementation/` are created as empty placeholder directories. They are
+  not git repositories. The `Installation Agent` turns the ones the user
+  keeps into real repositories and ensures each has a `HEAD` commit.
+- `Workspaces/__template__/Workspace.md` uses the default naming and
+  branch conventions described in section 8.5. The `Installation Agent`
+  rewrites them to match the user's actual conventions.
+- `Workspaces/__template__/Framework.md` is left as the brownfield stub
+  from section 8.8. The `Installation Agent` optionally fills it in.
+- `Workspaces/__template__/Prompts/Git Agent.md` is left with the
+  "not configured" external-tracker section from section 8.15. The
+  `Installation Agent` updates it.
+
+---
+
+## 4. Invariants (must reproduce exactly)
+
+These are non-negotiable. Reproduce the exact semantics regardless of language,
+OS, or programming language. You may translate the prose and file names per
+the adaptation rules in section 5, but the behavior, argument names, separators,
+and metadata formats must match.
+
+### 4.1 Dispatcher script (`Agent`)
+
+A thin transport layer with this CLI:
+
+- `--worker <display-name>` (optional, default `Default`)
+- `--prompt <path>` (required)
+- `--workspace <path>` (optional passthrough)
+- `--mode cli|tui` (optional, default `cli`)
+- `--tail <text>` (optional)
+- `--agent-name <text>` (optional, metadata)
+- `--context-files <comma-separated>` (optional)
+- `--dry-run` (optional flag)
+- `--new-window` (optional flag, passthrough hint for the worker)
+
+Behavior:
+- Validate `--prompt` exists.
+- Resolve the worker display name to `Scripts/Workers/<name>.<ext>`, restricted
+  to that folder. Sanitize the name by stripping every character outside
+  letters, digits, space, hyphen, underscore, and dot; reject empty results.
+  After sanitization, resolve the candidate path and reject it if its parent
+  is not the `Scripts/Workers/` directory (this rules out `..`, absolute
+  paths, or any other escape attempt).
+- Build a subprocess command that invokes the resolved worker script with all
+  passthrough arguments, normalizing `--context-files` to absolute paths.
+- Forward the subprocess exit code as the dispatcher exit code.
+- Do no other interpretation. In particular, do not validate the workspace.
+- `--new-window` is forwarded verbatim to the worker; the dispatcher itself
+  does not interpret it.
+
+### 4.2 Worker wrapper contract
+
+Every worker wrapper accepts the same arguments as the dispatcher passes
+through. Each wrapper:
+
+- Builds a **bootstrap** string for its harness in this exact shape:
+  - line 1: the translated form of `Read the file at '<absolute-prompt-path>' and follow the instructions exactly.`
+  - if a non-empty `--tail` is provided, append a blank line, the translated
+    form of the fixed prefix
+    `After reading the files above, the user asked you to do this:`, a
+    newline, then the tail text verbatim.
+- The path token (single-quoted absolute prompt path) and the user's tail
+  text are inserted verbatim into the translated sentences and must not be
+  altered.
+- Both translated sentences must be identical across every worker wrapper
+  shipped in this distributive and across every invocation; pick one
+  translation per sentence at scaffold time and reuse it.
+- Invokes the harness in CLI or TUI mode based on `--mode`.
+- Resolves the harness binary defensively. On Windows, if a direct lookup
+  fails, also try `%APPDATA%\npm\<binary>.cmd` before giving up.
+- If the harness binary cannot be started, exit with code 127 and a clear
+  message naming the missing binary.
+- `--context-files` is a hint only. If the harness supports attaching files,
+  pass them; otherwise ignore silently.
+- `--new-window` is a Windows-only convenience flag used by per-agent
+  launchers so the launching console does not stay blocked. When set and
+  `--mode tui` and the OS is Windows, the wrapper spawns the harness in a
+  detached new console (e.g. `subprocess.Popen` with `CREATE_NEW_CONSOLE`)
+  and returns 0 immediately without waiting. Ignored on other OSes or in
+  `cli` mode.
+- The harness subprocess is started with its working directory set to the
+  resolved `--workspace` path when provided, otherwise the wrapper's current
+  working directory.
+- The user-facing sentences in the bootstrap ("Read the file at '...' and
+  follow the instructions exactly." and "After reading the files above,
+  the user asked you to do this:") are the two pieces of prose that must be
+  translated into the chosen language and used consistently across every
+  wrapper. Only those two sentences are translated; the embedded prompt
+  path and the user's tail text stay verbatim.
+
+### 4.3 Work queue files
+
+Inside each workspace, the directory `Work/` contains exactly four files:
+`Next`, `Current`, `Blocked`, `Done` (with the markdown extension used by the
+project, normally `.md`).
+
+- Each file holds zero or more chunks.
+- Chunks are separated by a line that contains exactly three hyphens: `---`.
+- Empty chunks are ignored on read.
+- Round-trip rule: read chunks, mutate, write chunks back; content of
+  unaffected chunks must not change other than trailing whitespace
+  normalization.
+
+### 4.4 Rollback metadata header
+
+When a chunk moves into `Done`, it must carry a header on its first line in
+exactly this shape:
+
+```
+<!-- rollback: RepoNameA=<hash> RepoNameB=<hash> ... -->
+```
+
+- Keys are workspace-relative repository directory names.
+- Values are full git commit hashes (output of `git rev-parse HEAD` at the
+  moment the task entered `Current`).
+- Repos are listed in case-insensitive alphabetical order by name.
+- Whitespace: single space between tokens. Single space after the colon and
+  before the closing `-->`.
+
+### 4.4a Blocked reason header
+
+When a chunk moves into `Blocked` (because the verifier reported `FAIL`,
+emitted an invalid result, or because the verifier dispatcher exited
+non-zero), `Work - Do` must record **why** directly inside the chunk so
+the user reading `Work/Blocked.md` can act on it without inspecting logs.
+
+Insert the blocked-reason header on the line immediately after the
+existing rollback header (which is preserved verbatim). If there is no
+rollback header for some reason, the blocked-reason header is the first
+line of the chunk. Shape:
+
+```
+<!-- blocked: kind=<KIND> reason="<one-line reason>" -->
+```
+
+- `<KIND>` is one of the literal ASCII tokens `FAIL`, `INVALID`, or
+  `DISPATCHER` (verifier dispatcher exited non-zero).
+- `<one-line reason>` is a single-line human-readable explanation in
+  the chosen natural language:
+  - for `FAIL`: the text after the `FAIL: ` prefix in the verifier's
+    last non-empty line, verbatim;
+  - for `INVALID`: a fixed translated sentence stating that the
+    verifier output did not end with `PASS` or `FAIL: <text>`;
+  - for `DISPATCHER`: a fixed translated sentence stating that the
+    verifier dispatcher exited with code `<N>`.
+- Embedded double quotes in the reason are replaced with single
+  quotes; newlines and the literal sequence `-->` are replaced with
+  spaces, so the header always fits on one line and cannot terminate
+  the comment early.
+- Whitespace: single space between tokens; single space after the
+  colon and before the closing `-->`.
+
+When a blocked chunk is later moved to `Current` (via
+`--blocked-action to-current`) or to `Done` (via `--blocked-action
+to-done`), strip the blocked-reason header before writing. The rollback
+header stays.
+
+### 4.5 `Work - Do` state machine
+
+Invoked non-interactively with these arguments:
+
+- `--workspace <path>` (optional; default: current directory if it looks like
+  a workspace, i.e. contains the workspace document and `Work/`)
+- `--execution-worker <display-name>` (optional, default `Default`)
+- `--verification-worker <display-name>` (optional, default `Default`)
+- `--blocked-action to-current|to-done` (optional)
+- `--current-action restart|to-done` (optional)
+- `--mode cli|tui` (optional, default `cli`)
+- `--dry-run` (optional flag, passed through)
+
+Decision order on each invocation:
+
+1. If `Blocked` is non-empty:
+   - If `--blocked-action` is not provided: exit non-zero with a message
+     naming the two valid values and stop.
+   - If `to-current`: pop the first blocked chunk. If `Current` is non-empty,
+     exit non-zero. Otherwise write the chunk to `Current`.
+   - If `to-done`: pop the first blocked chunk and append it to `Done` as-is.
+   - Return after handling one blocked item.
+
+2. Else if `Current` is non-empty:
+   - If `--current-action` is not provided: exit non-zero with a message
+     naming the two valid values and stop.
+   - If `to-done`: move all current chunks to `Done` and stop.
+   - If `restart`: fall through to the execution step below using the existing
+     current chunk (do not recapture rollback metadata).
+
+3. Else if `Current` is empty and `Next` is non-empty:
+   - Pop the first chunk from `Next`.
+   - Capture per-repo HEAD hashes by running `git rev-parse HEAD` in each
+     immediate subdirectory of the workspace that is a git working tree.
+   - Prepend the rollback header (section 4.4) to the chunk.
+   - Write it to `Current`.
+   - Continue to execution.
+
+4. Execution and verification:
+   - Build a tail string equal to the current chunk body (rollback header
+     stripped).
+   - Invoke the dispatcher with the execution worker, the execute prompt
+     (`Prompts/Work - Execute` inside the workspace), the workspace path,
+     the mode, and the tail.
+   - If the dispatcher exits non-zero: print a clear message that the task
+     remains in `Current` and exit with that code.
+   - Otherwise invoke the dispatcher again with the verification worker and
+     the verify prompt (`Prompts/Work - Verify` inside the workspace) and the
+     same tail. Capture both calls' stdout/stderr so the verifier's trailing
+     line can be inspected; replay the captured output to the user's
+     stdout/stderr after each call (streaming live is also acceptable as
+     long as the verifier's last non-empty line remains parseable).
+   - If the verifier dispatcher exits non-zero: move the current chunk to
+     `Blocked` (preserving its rollback header, adding a blocked-reason
+     header per section 4.4a with kind `DISPATCHER`) and exit with that
+     code.
+   - Otherwise parse the verifier's stdout. Take the last non-empty line.
+     - If it equals `PASS` exactly: success.
+     - If it starts with `FAIL: ` and has non-empty text after the prefix:
+       move the current chunk to `Blocked` (preserving its rollback header,
+       adding a blocked-reason header per section 4.4a with kind `FAIL`
+       and the verbatim text after `FAIL: ` as the reason) and exit with
+       code 3.
+     - Anything else is `INVALID`: same handling as `FAIL` (move to
+       `Blocked`, add a blocked-reason header with kind `INVALID`, exit
+       3) with a message that the verifier output did not end with
+       `PASS` or `FAIL: <text>`.
+   - On success: move the current chunk to `Done`, keeping its rollback
+     header. Print one short success line.
+   - When `--dry-run` is set, skip verifier-output parsing (there is no real
+     verifier result to inspect) and do not move the current chunk; the
+     dispatcher's own dry-run output is the only effect.
+
+5. Else (`Blocked`, `Current`, and `Next` all empty):
+   - Print a single line indicating there is nothing to do and exit 0.
+
+Additional context passed to the dispatcher: build the `--context-files`
+value from existing artifacts in the workspace such as
+`Issue`, `Research`, `Plan`, `Status`, `Framework`, `Notes`, `Assignments`,
+`Work/Current`, `Work/Done`. Only include files that exist. Use absolute
+paths.
+
+### 4.6 `Work - Undo` state machine
+
+Invoked non-interactively with these arguments:
+
+- `--count <N>` (required, positive integer)
+- `--workspace <path>` (optional; same default as `Work - Do`)
+
+Behavior:
+
+1. Read `Done` chunks. Take the last `min(N, len(done))` chunks as the undo
+   set.
+2. Preflight: for every rollback entry across the undo set, verify the target
+   commit exists in the corresponding repository. If any check fails, exit
+   non-zero before making any changes.
+3. For each affected repository, run `git reset --hard <commit>` then
+   `git clean -fdx`. Stop on first repo failure with a non-zero exit; do not
+   try to recover, but report which repo and what failed.
+4. Strip rollback headers from the undo set and prepend them to the top of
+   `Next` in their original order. Write `Done` without the undone chunks.
+
+Destructive intent is by design: dirty working trees are erased.
+
+### 4.7 `Workspace - Create`
+
+Invoked with:
+
+- `--workspace <relative-path>` (required; relative to the `Workspaces` root)
+- `--branch <branch-name>` (required)
+
+Behavior:
+
+1. Refuse if the target directory already exists.
+2. Copy every non-git, non-launcher file and directory from
+   `Workspaces/__template__` into the new workspace path. Skip launcher files
+   (they are regenerated in step 5).
+3. Discover repositories: every immediate subdirectory of
+   `Workspaces/__template__` that contains a `.git` entry (file or directory)
+   is a repository.
+4. For each discovered repository:
+   - Require an existing `HEAD` commit. If `git rev-parse --verify HEAD`
+     fails, abort the entire create with a clear message instructing the
+     user to run installation setup so each template repo has at least one
+     initial commit (an empty commit is acceptable).
+   - Detect the currently checked-out branch in the template repo.
+   - If the current branch has a configured upstream, run `git pull --ff-only`
+     in the template repo. If it does not, skip the pull.
+   - If a local branch with the requested workspace branch name already exists
+     in that repo, attach a worktree at `<workspace>/<repo-name>` to it.
+     Otherwise create a new branch from `HEAD` and create the worktree.
+5. Generate per-agent launchers inside the new workspace using the recipe in
+   section 10 for the OS chosen at installation time. The script only emits
+   launchers for that OS; on other OSes the step is a silent no-op so
+   workspace creation still succeeds when the directory tree is shared
+   across machines. Five launchers, numbered:
+   1. Git Agent
+   2. Research Agent
+   3. Planner Agent
+   4. Worker Agent
+   5. Reviewer Agent
+
+   Each launcher invokes the dispatcher with `--worker Default`,
+   `--prompt Prompts/<Agent>` (relative to the workspace), `--workspace .`,
+   `--mode tui`, and `--agent-name "<Agent>"`.
+
+### 4.8 `Workspace - Remove` (archive only)
+
+Invoked with:
+
+- `--workspace <relative-path>` (required, relative to the `Workspaces` root)
+- `--synced` (required flag; without it the script refuses to run)
+- `--include-uncommitted` (optional flag; allow archiving with dirty
+  worktrees and snapshot their working-tree files into the archive)
+
+Behavior:
+
+1. If `--synced` is missing, exit non-zero with a message explaining the user
+   must run the Git Agent's backlog/changelog sync first and then rerun with
+   `--synced`.
+2. Refuse to act on `__template__` or `__archive__` themselves.
+3. Discover workspace repositories (immediate subdirectories of the workspace
+   containing a `.git` entry, file or directory).
+4. For each repo run `git status --porcelain`. Collect the set of dirty
+   repos. If any are dirty and `--include-uncommitted` was not given, exit
+   non-zero listing the dirty repo names and instructing the user to commit,
+   stash, discard, or rerun with `--include-uncommitted`.
+5. Compute the archive destination as
+   `Workspaces/__archive__/<same-relative-path>`. If the destination already
+   exists, append `__YYYY-MM-DD_HHMMSS` to the final segment.
+6. Move every non-repository child of the workspace into the destination,
+   preserving structure.
+7. For each repo, perform these sub-steps **in order**:
+   1. **Snapshot (conditional).** If the repo is dirty and
+      `--include-uncommitted` was given, copy the working tree (excluding
+      `.git`) into the destination under the repo name. This must happen
+      *before* any worktree removal so the dirty files are preserved on
+      disk. If the repo is clean, or `--include-uncommitted` was not
+      given (in which case the script would have already exited at step 4
+      for dirty repos), skip this sub-step.
+   2. **Remove the repo from the workspace.** After the optional snapshot,
+      always detach/delete the repo directory from the workspace:
+      - If the repo's `.git` is a worktree pointer (file whose `gitdir:`
+        value resolves under `<primary>/.git/worktrees/<name>`), invoke
+        `git worktree remove <repo-dir>` from the primary repo (with
+        `--force` when `--include-uncommitted` is set, since the worktree
+        is dirty).
+      - Otherwise (a plain repo directory, no primary detected) remove the
+        directory from the filesystem.
+
+   The snapshot and the removal are sequential, not alternative: a dirty
+   repo with `--include-uncommitted` is both snapshotted and then removed.
+8. Run `git worktree prune` once per unique primary repo to clean up stale
+   worktree records. Prune failures are warnings, not fatal.
+9. Attempt to remove the now-empty workspace directory (best effort).
+10. Do not delete any local or remote git branches. Do not run `git reset`,
+    `git clean`, or any other destructive git operation on repository
+    history. Worktree removal and pruning are allowed and required.
+
+### 4.9 `Status` document columns
+
+Whatever the chosen language and filename, the `Status` artifact contains one
+table with exactly these columns in this order:
+
+`Part | Expected | Current | Completion % | Last Checked`
+
+Free-form notes may follow the table. This format is for the agent's
+guidance, not for machine parsing.
+
+### 4.10 Research agent interaction
+
+The Research Agent prompt must instruct the agent to:
+
+- Before researching, ask the user whether they have any pre-context, notes,
+  or constraints to add.
+- Ask one question at a time during research.
+- Write findings to the workspace's `Research` document in free form.
+- Optionally propose deferred items into the workspace's `Backlog` document.
+
+### 4.11 Defaults for `Work - Do`
+
+- Execution and verification workers both default to `Default`.
+- Do not read `Assignments` to pick workers automatically. `Assignments` is a
+  human-facing preference document only.
+- Execute prompt: `Prompts/Work - Execute` inside the workspace.
+- Verify prompt: `Prompts/Work - Verify` inside the workspace.
+
+### 4.12 Launcher switch after installation
+
+This switch is performed by the `Installation Agent` (the prompt described
+in section 8.2), not by the scaffolder running this document. As the
+scaffolder, you must leave the top-level launcher pointing at the
+`Installation Agent` prompt.
+
+When the end user later runs the `Installation Agent` and completes its
+checklist, that agent changes the top-level launcher so it opens the
+`Workspace Agent` prompt instead of the `Installation Agent` prompt.
+Nothing else about the launcher changes. The launcher file name stays the
+same.
+
+---
+
+## 5. Adaptation surfaces
+
+You may adjust these freely.
+
+### 5.1 Natural language
+
+All user-facing text (prompts, READMEs, stubs, comments, printed messages)
+must be in the language chosen in interview question 1. This explicitly
+includes:
+
+- Both translated sentences of the harness bootstrap from section 4.2
+  (the "Read the file at ..." line and the tail prefix).
+- Every heading and section label in the per-file specs of section 8.
+  When section 8 lists English headings like "Goal", "Rules", "Inputs",
+  "Responsibilities", "Outputs", "Notes", "Typical tasks", "Required
+  behavior", "Output expectation", "Existing plan policy", "Structure",
+  "Workspace naming convention", "Branch convention", "Repository layout",
+  "Verification notes", "Navigation map", "Build / test / run / verify",
+  "Automation boundaries", "Required", "Plan", "Risks", "Verification
+  strategy", "Title", "Summary", "Validation", "Follow-ups", "Entry
+  format", and so on, those labels are translated too. The English forms
+  in this specification are reference identifiers, not literal output.
+- Printed messages and log event labels emitted by scripts (the `[work-do]`
+  / `[workspace-archive]` / etc. tags may stay as ASCII identifiers, but
+  the human-readable messages that follow them are translated).
+- Comments inside generated scripts.
+
+Protocol literals that are **not translated** under any circumstances
+(they are machine-parsed tokens, not user-facing prose):
+
+- The verifier output tokens `PASS` and the `FAIL: ` prefix from
+  section 4.5 / section 8.21. The free-text explanation after `FAIL: `
+  is in the chosen language, but the prefix itself is the literal ASCII
+  string `FAIL: ` (uppercase F-A-I-L, colon, single space).
+- The rollback header marker `<!-- rollback: ... -->` from section 4.4
+  and the blocked-reason header marker `<!-- blocked: ... -->` from
+  section 4.4a. Keys and structure are fixed ASCII; only the embedded
+  free-text reason value is in the chosen language.
+- The chunk separator line `---` from section 4.3.
+- Dispatcher / worker / `Work - *` CLI flag names (`--prompt`, `--mode`,
+  `--workspace`, `--blocked-action to-current|to-done`, etc.). Their
+  *help text* is translated; the flag names and enum values stay
+  ASCII.
+- Log event identifiers from section 9.7 (`work-do.start`,
+  `work-do.blocked`, etc.).
+
+When producing the per-file specs in section 8 (especially
+`Prompts/Work - Verify.md`), the verifier-output rule must read the same
+way in every language: the last non-empty line is `PASS` or
+`FAIL: <one-line reason>`, where `PASS` and `FAIL:` are literal ASCII
+tokens that must not be localized.
+
+File and directory names follow the separate rule in section 5.2.
+
+### 5.2 File and directory names
+
+By default, use the canonical English names below. If the user wants
+localized names, you may translate them, but you must:
+
+- Apply the mapping consistently across every file, launcher argument,
+  script reference, and prose mention.
+- Keep the file structure and relationships identical.
+- Use file system-safe characters only.
+
+Canonical names (English defaults):
+
+```
+INSTALL.md                                        (this file is consumed by the AI; do not regenerate it)
+README.md
+Open Agent                                        (top-level launcher; extension depends on OS)
+Prompts/
+  Installation Agent.md
+  Workspace Agent.md
+Scripts/
+  Agent.<ext>                                     (dispatcher)
+  Workspace - Create.<ext>
+  Workspace - Remove.<ext>
+  Work - Do.<ext>
+  Work - Undo.<ext>
+  Workers/
+    Default.<ext>
+Workspaces/
+  Backlog.md
+  Changelog.md
+  __archive__/                                    (empty directory; reserved)
+  __template__/
+    1. Open Git Agent                             (per-agent launcher)
+    2. Open Research Agent
+    3. Open Planner Agent
+    4. Open Worker Agent
+    5. Open Reviewer Agent
+    Workspace.md
+    Assignments.md
+    Backlog.md
+    Changelog.md
+    Framework.md
+    Issue.md
+    Notes.md
+    Plan.md
+    PR.md
+    Research.md
+    Status.md
+    Prompts/
+      Git Agent.md
+      Planner Agent.md
+      Research Agent.md
+      Reviewer Agent.md
+      Worker Agent.md
+      Work - Execute.md
+      Work - Verify.md
+    Work/
+      Blocked.md
+      Current.md
+      Done.md
+      Next.md
+```
+
+`<ext>` matches the chosen programming language (`.py`, `.sh`, `.js`, `.go`,
+etc.). Launchers have OS-specific extensions per section 10.
+
+### 5.3 Programming language
+
+You may translate the scripts in section 9 into any commonly available
+language. Defaults to Python with standard library only.
+
+Requirements regardless of language:
+
+- Argument parsing with explicit long flags as specified.
+- Subprocess invocation with explicit argument vectors (no shell string
+  interpolation).
+- File copy/move that preserves directory structure.
+- Read and write text files as UTF-8.
+- Force UTF-8 for every I/O boundary the script touches, not just file
+  reads/writes. The chosen natural language may contain non-ASCII
+  characters, and the default console/subprocess encodings on Windows
+  (cp1251, cp1252, cp866, etc.) will corrupt them otherwise. Concretely:
+  - process stdout/stderr must emit UTF-8 (Python: reconfigure
+    `sys.stdout`/`sys.stderr` with `encoding="utf-8"`, or set
+    `PYTHONIOENCODING=utf-8`; Node.js: `process.stdout.setDefaultEncoding`
+    is not enough on Windows, prefer writing buffers; Bash: ensure the
+    locale is UTF-8);
+  - subprocess captures must decode as UTF-8 (Python: pass
+    `encoding="utf-8"` together with `text=True` to `subprocess.run`/
+    `Popen`; never rely on the platform default);
+  - subprocess invocations that forward our translated strings (the
+    bootstrap from section 4.2, the `--tail` value, printed messages) must
+    pass through unchanged; set `PYTHONIOENCODING=utf-8` (or the
+    equivalent) in the child environment when spawning interpreters of the
+    same language so the chain stays UTF-8 end to end;
+  - log files written by `WorkflowLog` (section 9.7) are opened in UTF-8
+    explicitly;
+  - **Windows console code page.** On Windows, the console code page
+    (not `PYTHONIOENCODING`) is what every non-Python child inherits,
+    including the AI harness and any shell it spawns (PowerShell, cmd).
+    The default is cp1252 / cp866 / cp1251 depending on the system
+    locale, which corrupts UTF-8 bytes coming from upstream and from
+    downstream tool calls (typical symptom: harness output shows `?`
+    characters instead of accented letters). Every script that spawns a
+    subprocess on Windows -- at minimum the dispatcher
+    (`Scripts/Agent.<ext>`) and every worker wrapper under
+    `Scripts/Workers/` -- must set both the input and output console
+    code pages to 65001 (UTF-8) at startup, before any subprocess is
+    launched. In Python this is:
+
+    ```python
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        k32.SetConsoleCP(65001)
+        k32.SetConsoleOutputCP(65001)
+    ```
+
+    Use the idiomatic equivalent for the chosen programming language
+    (Node.js: same `kernel32` call via `ffi-napi`, or `chcp 65001` in a
+    `.cmd` shim; Bash on Windows: not applicable). This is in addition
+    to, not a replacement for, the Python-side `PYTHONIOENCODING` /
+    `sys.stdout.reconfigure` settings above.
+  Pick the idiomatic enforcement for the chosen language and apply it in
+  every script the scaffolder produces.
+
+### 5.4 OS launcher mechanism
+
+Pick the recipe in section 10 that matches the chosen OS. The launcher
+invokes the dispatcher with the appropriate prompt path and worker.
+
+### 5.5 Harness invocation
+
+Each worker wrapper builds the harness command for both `cli` and `tui`
+modes. The bootstrap shape in section 4.2 is fixed; the surrounding command
+is whatever the harness expects. See section 11.
+
+---
+
+## 6. Architecture overview
+
+Lifecycle:
+
+1. The user opens the top-level launcher. The first time, it opens an AI
+   agent with the `Installation Agent` prompt. That agent runs the
+   installation checklist (section 8.2) and, as its last step, switches the
+   same launcher to point at the `Workspace Agent` prompt.
+2. From the second launch onward, the same launcher opens the `Workspace
+   Agent` prompt.
+3. The Workspace Agent can create a workspace, archive a workspace, or open
+   per-workspace agents.
+4. Inside a workspace, agents are: Git, Research, Planner, Worker, Reviewer.
+   Their prompts live in `Workspaces/__template__/Prompts/` and are copied
+   per workspace during `Workspace - Create`.
+5. Worker drives a markdown-backed task queue via `Work - Do` and
+   `Work - Undo`.
+6. When work is finished, the Reviewer Agent produces a `Changelog` and `PR`
+   artifact. The Git Agent finalizes and syncs the workspace's `Backlog` and
+   `Changelog` into the global `Workspaces/Backlog.md` and
+   `Workspaces/Changelog.md`.
+7. `Workspace - Remove` archives the workspace under `__archive__`.
+
+---
+
+## 7. File manifest
+
+Create exactly these files. Do not create more, do not skip any.
+
+### Root
+
+- `README.md` - short overview of the workflow, the lifecycle, and how to
+  launch.
+- `Open Agent.<launcher-ext>` - top-level launcher (see section 10). Points
+  at the `Installation Agent` prompt. The `Installation Agent` switches it
+  to the `Workspace Agent` prompt at the end of its own checklist
+  (section 4.12).
+- `Prompts/Installation Agent.md` - prompt that drives an installation
+  conversation similar to the one that produced this workflow. Tells the AI
+  to verify worker wrappers, repositories, naming, optional framework
+  mapping, and finally to switch the launcher. Platform-agnostic content.
+- `Prompts/Workspace Agent.md` - prompt that orchestrates workspace creation,
+  archival, and opening per-workspace agents.
+
+### Scripts
+
+- `Scripts/Agent.<ext>` - the dispatcher described in section 4.1 and 9.1.
+- `Scripts/Workspace - Create.<ext>` - section 4.7 and 9.2.
+- `Scripts/Workspace - Remove.<ext>` - section 4.8 and 9.3.
+- `Scripts/Work - Do.<ext>` - section 4.5 and 9.4.
+- `Scripts/Work - Undo.<ext>` - section 4.6 and 9.5.
+- `Scripts/Workers/Default.<ext>` - worker wrapper for the chosen harness in
+  CLI and TUI modes (section 4.2, 9.6, and 11).
+- `Scripts/WorkflowLog.<ext>` - shared logging utility (section 9.7) imported
+  by the workflow scripts above.
+
+### Workspaces root
+
+- `Workspaces/Backlog.md` - global backlog stub with entry format.
+- `Workspaces/Changelog.md` - global changelog stub with entry format.
+- `Workspaces/__archive__/` - empty directory; reserved.
+- `Workspaces/__template__/` - everything below.
+- `Workspaces/__template__/Configuration/`, `Documentation/`, `Implementation/` -
+  empty placeholder directories shipped with the distributive as the default
+  starter layout. They are not git repositories on first install; the
+  Installation Agent turns the ones the user keeps into real repos with at
+  least one `HEAD` commit. The user may add, rename, or remove these
+  placeholders during installation.
+
+### Template per-workspace artifacts
+
+- `Workspace.md` - explains structure, repository roles, branch convention,
+  and verification notes.
+- `Assignments.md` - free-form worker preference notes (human-facing only).
+- `Backlog.md` - per-workspace backlog stub.
+- `Changelog.md` - per-workspace changelog stub.
+- `Framework.md` - high-level project navigation and build/test/run/verify
+  notes; stub explains brownfield assumption when empty.
+- `Issue.md` - structured issue capture stub.
+- `Notes.md` - free-form user notes stub.
+- `Plan.md` - plan stub with risk and verification sections.
+- `PR.md` - pull request draft stub.
+- `Research.md` - research artifact stub; default text says "No research."
+- `Status.md` - status table stub with the five columns from section 4.9.
+
+### Template per-agent prompts
+
+- `Prompts/Git Agent.md`
+- `Prompts/Research Agent.md`
+- `Prompts/Planner Agent.md`
+- `Prompts/Worker Agent.md`
+- `Prompts/Reviewer Agent.md`
+- `Prompts/Work - Execute.md`
+- `Prompts/Work - Verify.md`
+
+### Template work queue
+
+- `Work/Next.md`
+- `Work/Current.md`
+- `Work/Blocked.md`
+- `Work/Done.md`
+
+### Template per-agent launchers
+
+Five OS-specific launcher files numbered as in section 4.7 step 5. They open
+each per-workspace agent through the dispatcher with the Default worker.
+
+---
+
+## 8. Per-file content specs
+
+For every prompt or template document below, write the content in the chosen
+language. Each spec lists the required headings and short guidance lines.
+Keep the prose concise.
+
+The heading names quoted below (for example "Goal", "Rules", "Inputs",
+"Required behavior") are reference identifiers in this specification. In
+the files you actually produce, translate them into the chosen language
+along with the rest of the prose, per section 5.1. Keep the order and the
+meaning; only the wording changes.
+
+### 8.1 `README.md`
+
+A short one-pager. The exact headings are free, but the document must cover,
+in any order:
+
+- A two-to-three-line overview of the agentic, workspace-based delivery
+  model.
+- The launcher lifecycle (first run uses `Installation Agent`, subsequent
+  runs use `Workspace Agent`).
+- The dispatcher contract (the canonical flags of `Scripts/Agent.<ext>`).
+- The work-queue file set and chunk separator.
+- The typical end-to-end flow that mirrors section 6.
+- A short safety note: workspace removal is archive-only, no remote push
+  without explicit user request.
+- A bullet list of the scripts with a one-line purpose each.
+
+### 8.2 `Prompts/Installation Agent.md`
+
+Headings: "Goal", "Rules", "Installation checklist", "Expected output
+artifacts".
+
+This agent is the **single owner** of every decision the scaffolder
+deliberately deferred (section 3): template git repositories, naming/branch
+conventions, framework mapping, and external issue tracker. The AI
+harness for the `Default` worker is **not** in this list -- it was
+configured by the scaffolder during interview question 5 and the
+`Installation Agent` itself is running through that wrapper. The
+scaffolder writes only generic defaults for the deferred items; this
+agent collects the real answers on the user's machine and rewrites the
+affected files in place.
+
+Guidance:
+- Goal: prepare this distributive so the next launch opens `Workspace Agent`
+  instead of `Installation Agent`.
+- Rules: keep the prompt platform-agnostic; one question at a time; do not
+  reconfigure `Scripts/Workers/Default` (it is already wired by the
+  scaffolder and is the very wrapper running this agent); produce
+  concrete file updates and commands; no remote push.
+- Installation checklist (in order):
+  1. **Additional worker wrappers (optional).** `Scripts/Workers/Default`
+     was configured by the scaffolder and must not be changed here. If
+     the user wants extra worker wrappers for other harnesses, create
+     them alongside `Default` in `Scripts/Workers/` following section 4.2
+     and section 9.6. If the user has no additional wrappers in mind,
+     skip this step.
+  2. **Template repositories.** Present the user with the **default
+     candidate list** of three directories under
+     `Workspaces/__template__/` that may become git repositories:
+     `Configuration/`, `Documentation/`, `Implementation/`. Do **not**
+     include `Prompts/` or `Work/` in this list (those are workflow
+     coordination directories that are part of the template itself and
+     never repositories), and do not list any other top-level template
+     files. First ask one shortcut question:
+
+     > "Initialize all three (`Configuration/`, `Documentation/`,
+     > `Implementation/`) as local git repos with an empty initial commit?
+     > [Yes / No, let me choose / None]"
+
+     - If the user picks **Yes**: run `git init` + `git commit
+       --allow-empty -m <init message>` in each of the three directories
+       on the default baseline branch. Do not ask per-directory upstream
+       questions in this fast path; the user can wire upstreams later.
+     - If the user picks **No, let me choose**: ask, one at a time, for
+       each of the three candidates whether to (a) make it a local-only
+       repo, (b) clone from an upstream URL, (c) leave it as a plain
+       directory, or (d) remove it entirely. Apply each choice.
+     - If the user picks **None**: leave all three as plain directories
+       and skip ahead.
+
+     After the chosen directories are real repos, each must have a
+     resolvable `HEAD` (empty initial commit is acceptable) and correct
+     upstream tracking where the user supplied a URL. The user may also
+     add, rename, or remove placeholder directories beyond the default
+     three -- if they ask, accept those changes, but never volunteer
+     `Prompts/` or `Work/` as candidates.
+  3. **Workspace naming and branch conventions.** Ask the user how workspace
+     paths and branch names should be constructed. Rewrite
+     `Workspaces/__template__/Workspace.md` so the "Workspace naming
+     convention", "Branch convention", and "Repository layout" sections
+     reflect the user's answers and the actual repositories from step 2.
+  4. **Optional framework mapping.** Ask whether to generate or refresh
+     `Workspaces/__template__/Framework.md` from the repositories configured
+     in step 2. If yes, produce the high-level navigation map and the
+     build/test/run/verify guidance. If no, leave the brownfield stub in
+     place and add a follow-up entry to
+     `Workspaces/__template__/Backlog.md`.
+  5. **External issue tracker.** Ask where tasks/progress are tracked
+     outside workspaces (e.g. Gitea, GitHub, GitLab, Jira, Linear, or none).
+     Capture base URLs, org/project/repo identifiers, ID formats, and
+     whether MCP access is required and available. Update
+     `Workspaces/__template__/Prompts/Git Agent.md` so issue/ticket
+     references resolve correctly. If none, leave the "not configured"
+     section as-is and record that fact.
+  6. **Verify installation.** Before switching the launcher, run a
+     self-check and fix anything that fails. Do not ask the user to do
+     this; do it and report results. Required checks:
+     - Each subdirectory of `Workspaces/__template__/` that the user
+       chose as a repository in step 2 is a real git repository
+       (`<repo>/.git` exists), is on the expected baseline branch, and
+       has a resolvable `HEAD` (`git -C <repo> rev-parse --verify HEAD`
+       succeeds). Repos with a configured upstream have the upstream
+       set as the user requested. Placeholder directories the user
+       chose to keep as non-repos are still present.
+     - `Workspaces/__template__/Workspace.md` reflects the user's
+       repository list and naming/branch conventions from steps 2-3
+       (no leftover default mentions of removed placeholders, no
+       references to repositories that were not actually created).
+     - `Workspaces/__template__/Framework.md` matches the decision
+       from step 4 (filled-in map or brownfield stub plus a backlog
+       follow-up entry; not both, not neither).
+     - `Workspaces/__template__/Prompts/Git Agent.md` reflects the
+       step-5 tracker decision (configured details, or an explicit
+       "not configured" section).
+     - Dispatcher smoke test: invoke `Scripts/Agent.<ext>` with
+       `--worker Default --prompt <abs Workspace Agent path> --mode cli
+       --dry-run` and confirm it prints a harness command without
+       error. Do **not** smoke-test against `Installation Agent.md`
+       once the launcher has been switched.
+     - Top-level launcher (before the switch in step 7) still parses
+       and targets the dispatcher with valid arguments per section 10.
+     If any check fails, repair the offending artifact and re-run the
+     affected check. Only proceed to step 7 once all checks pass.
+
+  7. **Switch the top-level launcher.** Change the top-level `Open Agent`
+     launcher so its prompt argument points to
+     `Prompts/Workspace Agent.md` instead of `Prompts/Installation Agent.md`
+     (section 4.12). Do not change the launcher file name or any other
+     property. After the switch, re-run the dispatcher smoke test from
+     step 6 against the new prompt target (`Workspace Agent.md`) to
+     confirm the launcher still resolves to a valid harness command.
+
+  8. **Offer to open Workspace Agent in a new window.** After
+     reporting "installation complete", ask the user whether they want
+     to launch the `Workspace Agent` right now. If yes, **do not** load
+     the `Workspace Agent` prompt into the current Installation Agent
+     session (that would reuse this session's context and is not what
+     the user wants). Instead, open the top-level `Open Agent`
+     launcher in a new OS-level window so it spawns a fresh harness
+     process pointed at the now-switched prompt. Concretely:
+     - Windows: `Start-Process -FilePath "<abs path to Open Agent.lnk>"`
+       (or `cmd /c start "" "<abs path>"`); the `.lnk` runs the
+       dispatcher in its own console.
+     - macOS: `open "<abs path to Open Agent.command>"`.
+     - Linux: `xdg-open "<abs path to Open Agent.desktop>"` or
+       `gtk-launch <basename>`; fall back to executing the launcher
+       directly in a detached terminal (`setsid <launcher> &`) if
+       neither is available.
+     The Installation Agent session itself stays open in its original
+     window so the user can review the install summary. Do not push
+     anything to a remote, and do not auto-launch without asking.
+  9. End with: installation complete, next run starts workspace flow.
+- Expected output artifacts: optional additional worker wrappers under
+  `Scripts/Workers/` (the existing `Default` wrapper is left untouched);
+  real git repositories under `Workspaces/__template__/` with at least one
+  `HEAD` commit each; updated `Workspaces/__template__/Workspace.md`;
+  updated or stubbed `Workspaces/__template__/Framework.md` (with a
+  backlog note when stubbed); updated
+  `Workspaces/__template__/Prompts/Git Agent.md`; top-level launcher
+  switched to `Workspace Agent`.
+
+### 8.3 `Prompts/Workspace Agent.md`
+
+Headings: "Responsibilities", "Rules", "Notes".
+
+Guidance:
+- Responsibilities:
+  - create a workspace via `Workspace - Create`,
+  - archive a workspace via `Workspace - Remove --synced`,
+  - open per-workspace agents by resolving the user's agent name to the
+    exact per-workspace launcher file via this fixed mapping (no fuzzy
+    lookup):
+    - Git -> `1. Open Git Agent` launcher
+    - Research -> `2. Open Research Agent` launcher
+    - Planner -> `3. Open Planner Agent` launcher
+    - Worker -> `4. Open Worker Agent` launcher
+    - Reviewer -> `5. Open Reviewer Agent` launcher
+  - The launcher is opened by explicit path only:
+    `Workspaces/<workspace>/<launcher-file>`. On Windows that means
+    `Start-Process -FilePath "<absolute-launcher-path>"`. On other OSes
+    invoke the launcher equivalently (see section 10).
+- Rules:
+  - one question at a time, explicit confirmation for archive, no remote
+    push,
+  - resolve "open <agent>" requests against the currently discussed
+    workspace unless the user names a different one,
+  - do not run broad file searches for scripts or launchers; use
+    deterministic workflow-root-relative paths (`Scripts/...`,
+    `Workspaces/<workspace>/...`),
+  - if the session starts inside a workspace folder, resolve the workflow
+    root by walking upward to the directory that contains both `Scripts/`
+    and `Workspaces/`, then use workflow-root-relative paths from there.
+- Notes: per-workspace work happens inside workspace prompts and markdown
+  files; the global backlog/changelog files live in `Workspaces/Backlog.md`
+  and `Workspaces/Changelog.md`.
+
+### 8.4 `Workspaces/Backlog.md` and `Workspaces/Changelog.md`
+
+Each contains a one-line description and an "Entry format" section listing
+the fields used by the Git Agent when syncing from workspaces:
+
+- Backlog entry: Date, Workspace, Source, Follow-up.
+- Changelog entry: Date, Workspace, Scope, Outcome.
+
+### 8.5 Template `Workspace.md`
+
+Headings: "Structure", "Workspace naming convention", "Branch convention",
+"Repository layout", "Verification notes".
+
+Guidance:
+- Structure: short description of the prompt files, work queue files, and
+  core artifacts inside the workspace.
+- Workspace naming convention: short text describing how new workspace
+  paths are constructed. The scaffolder writes the generic default
+  (lowercase, path-safe, `feature/<area>/<ticket-or-scope>`); the
+  Installation Agent rewrites this section with the user's actual
+  convention (section 8.2 step 3).
+- Branch convention: a single shared workspace branch name used by every
+  repository in the workspace (default pattern
+  `workspace/<area>/<ticket-or-scope>`).
+- Repository layout: one bullet per configured repository directory with a
+  one-line purpose. The default starter content lists `Implementation/`,
+  `Documentation/`, and `Configuration/`; installation rewrites this list to
+  match the repositories the user actually keeps.
+- Verification notes: a one-line pointer that build/test/run/verify commands
+  live in `Framework.md` and must be kept current.
+
+### 8.6 Template `Assignments.md`
+
+One-paragraph explanation that this file is for free-form worker preferences
+and that scripts do not read it. Add a short example list.
+
+### 8.7 Template `Backlog.md` and `Changelog.md`
+
+Per-workspace versions written from the workspace's point of view. They use
+different fields than the global files in section 8.4 because the Git Agent
+is responsible for transforming local entries into the global shape when
+syncing.
+
+- Per-workspace `Backlog.md` entry format:
+  `Priority`, `Title`, `Reason deferred`, `Suggested next step`.
+- Per-workspace `Changelog.md` entry format:
+  `Scope`, `Key changes`, `Verification`, `Risks/follow-up`.
+
+Note in each file that the Git Agent maps these entries into the global
+`Workspaces/Backlog.md` and `Workspaces/Changelog.md` (which use the
+`Date / Workspace / ...` shape from section 8.4).
+
+### 8.8 Template `Framework.md`
+
+Headings: "Navigation map", "Build / test / run / verify", "Automation
+boundaries".
+
+Guidance:
+- If the user opted out of framework research, include a leading paragraph
+  declaring the workspace as brownfield with no enforced design, and saying
+  research may be needed for technical details.
+- Otherwise fill in the high-level navigation map (no low-level details) and
+  the build/test/run/verify commands.
+
+### 8.9 Template `Issue.md`
+
+Headings: "Required".
+
+Required fields: ID, Title, Problem statement, Scope, Non-goals, Acceptance
+criteria.
+
+### 8.10 Template `Notes.md`
+
+One short paragraph explaining what to put here (extra context, constraints,
+preferences not captured elsewhere).
+
+### 8.11 Template `Plan.md`
+
+Headings: "Plan", "Risks", "Verification strategy".
+
+Guidance: numbered plan steps, risk bullets, verification approach bullets.
+
+### 8.12 Template `PR.md`
+
+Headings: "Title", "Summary", "Validation", "Follow-ups".
+
+Guidance: stub bullets under each, prepared for the Git Agent to finalize.
+
+### 8.13 Template `Research.md`
+
+Default content: "No research." Plus a short note that the Research Agent
+will rewrite this file as a free-form Q&A or technical log.
+
+### 8.14 Template `Status.md`
+
+Single markdown table with the columns from section 4.9 and one example row.
+Below the table, a short "Notes" section captures two rules:
+- Use this file to explain why any part is not at 100% completion.
+- Out-of-scope items must be moved to the workspace's `Backlog`.
+
+The Reviewer Agent owns updates to this file in practice, but the template
+itself does not need to spell that out.
+
+### 8.15 Template `Prompts/Git Agent.md`
+
+Headings: "Inputs", "Typical tasks", "Rules".
+
+Guidance:
+- Inputs: workspace `Issue`, `PR`, `Backlog`, `Changelog`, `Workspace`
+  documents.
+- Typical tasks: read issue from tracker to populate `Issue`; update issue
+  comments and status; prepare PR using `PR.md`; perform explicit git
+  operations on request; sync workspace `Backlog` and `Changelog` into the
+  global ones in `Workspaces/`.
+- Rules: one question at a time, no push without explicit user request.
+
+### 8.16 Template `Prompts/Research Agent.md`
+
+Headings: "Required behavior", "Optional tasks".
+
+Guidance: mirror section 4.10. Ask for pre-context first, then ask one
+question at a time, then write `Research`. Optionally update `Backlog`.
+
+### 8.17 Template `Prompts/Planner Agent.md`
+
+Headings: "Inputs", "Outputs", "Existing plan policy", "Notes".
+
+Guidance:
+- Inputs: `Issue`, `Research`, `Notes`, `Changelog`, `Framework`.
+- Outputs: `Plan` and `Status` (with the columns from section 4.9).
+- Existing plan policy:
+  - If `Plan.md` already exists, do not rewrite or replace it unless the
+    user explicitly asks for a rewrite.
+  - If the user asks to refine planning, append focused updates or edit only
+    the requested sections.
+  - If the user says not to change the plan, treat `Plan.md` as read-only
+    and continue with discussion/review only.
+  - Always confirm intent before replacing an existing plan wholesale.
+- Notes: `Research` may say "No research" and planning still proceeds.
+  Defer out-of-scope items to `Backlog`.
+
+### 8.18 Template `Prompts/Worker Agent.md`
+
+Headings: "Inputs", "Responsibilities", "Rules".
+
+Guidance:
+- Inputs: `Plan`, `Issue`, `Notes`, `Changelog`, `Research`, `Status`,
+  `Framework`, `Assignments`.
+- Responsibilities: help derive blocks into `Work/Next` (separator `---`);
+  invoke `Work - Do`; resolve `Blocked`/`Current` decisions via explicit CLI
+  arguments; invoke `Work - Undo` when rollback is requested; refine work
+  toward 100% in `Status` or propose backlog items; when the user asks to
+  run all work, process tasks sequentially one by one.
+- After each task is verified and moved to `Work/Done`, create a local git
+  commit for each changed repository before starting the next task. Commit
+  only after successful verification; do not batch commits across tasks; the
+  commit message references the completed task block intent; never push
+  unless the user explicitly asks.
+- Rules: one question at a time when clarifying; keep operations explicit
+  and script-driven; workflow scripts live at workflow root `Scripts/`, not
+  inside workspace directories (never propose creating `Work - Do` or
+  `Work - Undo` inside a workspace); if the session starts in a workspace
+  folder, locate the root scripts by walking upward to the directory that
+  contains `Scripts/Work - Do.<ext>`; for the "define work" flow read only
+  the minimum required files first (`Plan`, `Status`, `Work/Next`, optionally
+  `Assignments`) and do not run broad cross-workspace discovery; if
+  `Work/Next` already has actionable blocks, do not regenerate them unless
+  the user explicitly asks; if it is empty, create initial actionable blocks
+  immediately; treat `Plan` as input, not output (do not edit `Plan` unless
+  the user explicitly asks).
+
+### 8.19 Template `Prompts/Reviewer Agent.md`
+
+Headings: "Inputs", "Outputs", "Rules".
+
+Guidance:
+- Inputs: `Plan`, `Issue`, `Status`, `Work/Done`, repository changes.
+- Outputs: `Changelog`, `PR`, optional updates to `Status`, `Notes`,
+  `Backlog`.
+- Rules: explain gaps; keep status updates concrete and measurable.
+
+### 8.20 Template `Prompts/Work - Execute.md`
+
+Headings: "Inputs", "Required behavior", "Output expectation".
+
+Guidance:
+- Inputs: the current work chunk and the artifacts listed in section 4.5.
+- Required behavior:
+  - apply changes scoped to the active chunk's intent;
+  - report what was changed and what remains;
+  - do not update workflow coordination files. Treat the following as
+    read-only context during execution: `Status`, `Plan`, `Research`,
+    `Notes`, `Assignments`, `Issue`, `PR`, `Changelog`, `Backlog`, and every
+    file under `Work/`.
+- Output expectation: clear execution result; if blocked, describe the
+  blocker and suggested next action.
+
+### 8.21 Template `Prompts/Work - Verify.md`
+
+Headings: "Inputs", "Required behavior", "Output expectation".
+
+Guidance:
+- Inputs: same as Execute.
+- Required behavior: validate that execution matches chunk intent; run
+  verification steps relevant to the change.
+- Output expectation: the last non-empty line of the verifier's output must
+  be exactly `PASS` when the work is acceptable for moving to `Done`, or
+  exactly `FAIL: <one-line explanation>` otherwise. `PASS` and the `FAIL: `
+  prefix are literal ASCII protocol tokens and must not be translated
+  (see section 5.1); only the free-text explanation after `FAIL: ` is in
+  the chosen language. `Work - Do` parses that line; anything else is
+  treated as an invalid verifier result and routed the same way as `FAIL`
+  (see section 4.5). When the verifier reports `FAIL` (or produces an
+  invalid result), `Work - Do` records the reason inside the chunk via
+  the blocked-reason header from section 4.4a, so the user can read
+  `Work/Blocked.md` and see why each chunk is there without consulting
+  logs.
+
+### 8.22 Template `Work/Next.md`, `Work/Current.md`, `Work/Blocked.md`, `Work/Done.md`
+
+All four work-queue files in the template are empty files. They exist so the
+workspace structure is complete on copy, but they carry no instructional
+text or example content. The chunk format (section 4.3) and rollback header
+format (section 4.4) are the authoritative reference; do not duplicate them
+into these files.
+
+---
+
+## 9. Per-script behavioral specs
+
+For each script: argument list, behavior, exit codes, side effects. Translate
+to the chosen programming language. Use plain standard-library code.
+
+### 9.1 Dispatcher (`Agent`)
+
+Inputs: as in section 4.1.
+
+Behavior:
+
+```
+def main():
+    args = parse_canonical_args()
+    if not file_exists(args.prompt):
+        print_error("Prompt not found: " + args.prompt)
+        return 2
+    try:
+        worker_path = resolve_worker(args.worker)  # folder-restricted
+    except invalid:
+        print_error(...)
+        return 2
+    cmd = [interpreter, worker_path,
+           "--prompt", absolute(args.prompt),
+           "--mode", args.mode]
+    if args.workspace: cmd += ["--workspace", absolute(args.workspace)]
+    if args.tail:      cmd += ["--tail", args.tail]
+    if args.agent_name:cmd += ["--agent-name", args.agent_name]
+    if args.context_files:
+        cmd += ["--context-files", normalize_csv_absolute(args.context_files)]
+    if args.dry_run:   cmd += ["--dry-run"]
+    if args.new_window:cmd += ["--new-window"]
+    return subprocess_run(cmd).exit_code
+```
+
+Exit codes: 0 success, 2 user error (bad prompt or worker), worker's own
+exit code otherwise.
+
+### 9.2 `Workspace - Create`
+
+Inputs: as in section 4.7.
+
+Behavior:
+
+```
+def main():
+    args = parse()
+    if target_exists(args.workspace): return 2
+    create_directory(target)
+    repos = immediate_subdirs_with_git(template_root)
+    for repo in repos:
+        if not git_has_head(repo):  # git rev-parse --verify HEAD
+            print_error(f"Repo {repo.name} has no HEAD commit. "
+                        "Run `git commit --allow-empty -m init` in it and rerun.")
+            return 2
+    repos_names = {r.name for r in repos}
+    for child in template_root.children:
+        if child.name in repos_names: continue
+        if is_launcher(child): continue
+        copy(child, target / child.name)
+    for repo in repos:
+        current = git_current_branch(repo)
+        if has_upstream(repo, current):
+            git_pull_ff_only(repo)
+        if branch_exists(repo, args.branch):
+            git_worktree_add(repo, target/repo.name, args.branch)
+        else:
+            git_worktree_add_new_branch(repo, target/repo.name, args.branch, "HEAD")
+    create_per_agent_launchers(target)
+    print_success(target)
+    return 0
+```
+
+Exit codes: 0 success, 2 user/precondition error, propagate git failures.
+
+### 9.3 `Workspace - Remove` (archive)
+
+Inputs: as in section 4.8.
+
+Behavior:
+
+```
+def main():
+    args = parse()
+    if not args.synced:
+        print_error("Refusing to archive without --synced. "
+                    "Run Git Agent sync first.")
+        return 2
+    if is_reserved(args.workspace): return 2
+    if not source_exists: return 2
+    repos = immediate_subdirs_with_git(source)
+    primaries = {repo: worktree_primary_repo(repo) for repo in repos}
+    dirty = [repo for repo in repos if git_status_porcelain(repo) != ""]
+    if dirty and not args.include_uncommitted:
+        print_error("Uncommitted changes in: " + ", ".join(r.name for r in dirty))
+        return 2
+    dest = archive_root / relative_path(source)
+    if dest exists: dest = dest.parent / (dest.name + "__" + timestamp())
+    mkdir(dest)
+    for child in source.children:
+        if child in repos: continue
+        move(child, dest / child.name)
+    for repo in repos:
+        if args.include_uncommitted and repo in dirty:
+            copytree(repo, dest/repo.name, ignore=[".git"])
+        primary = primaries[repo]
+        if primary is not None:
+            git_worktree_remove(primary, repo, force=args.include_uncommitted)
+        else:
+            rmtree(repo)
+    for primary in unique(p for p in primaries.values() if p):
+        git_worktree_prune(primary)   # warning only on failure
+    try_rmdir(source)                 # best effort
+    print_success(dest)
+    return 0
+```
+
+Helpers:
+- `worktree_primary_repo(repo)`: if `<repo>/.git` is a file, parse its
+  `gitdir:` value. If that path resolves to
+  `<primary>/.git/worktrees/<name>`, return `<primary>`. Otherwise return
+  `None`.
+- `git_worktree_remove(primary, repo, force)`: run
+  `git -C <primary> worktree remove <repo> [--force]`.
+- `git_worktree_prune(primary)`: run `git -C <primary> worktree prune`.
+
+Exit codes: 0 success, 2 user/precondition error (missing `--synced`,
+reserved path, missing source, dirty repos without `--include-uncommitted`),
+propagate git failures from worktree removal.
+
+### 9.4 `Work - Do`
+
+Inputs: as in section 4.5.
+
+Behavior follows the decision order in section 4.5 step by step. Provide a
+chunk parser that:
+
+- Reads text as UTF-8.
+- Splits on lines equal to `---` after stripping trailing whitespace.
+- Strips each chunk's surrounding whitespace.
+- Filters out empty chunks.
+
+Writer:
+
+- Joins chunks with `\n---\n\n`.
+- Ends file with a single trailing newline.
+- Writes an empty file when the list is empty.
+
+Rollback header helpers:
+
+- `parse_header(chunk)` returns `(mapping, body_without_header)`.
+- `add_header(chunk, mapping)` merges mapping with any existing one, sorts
+  keys case-insensitively, and produces the exact line from section 4.4.
+
+Dispatcher invocation: spawn the interpreter on `Scripts/Agent.<ext>` with
+the canonical arguments. Build `--context-files` from the existing workspace
+artifacts listed in section 4.5. The verifier dispatcher call captures its
+stdout so the trailing `PASS` / `FAIL: <text>` line can be parsed; the
+executor call may stream output.
+
+Verification outcome handling:
+
+- Dispatcher non-zero exit on the verifier call -> move current chunk to
+  `Blocked` (rollback header preserved, blocked-reason header added with
+  kind `DISPATCHER`) and return the dispatcher's exit code.
+- Verifier stdout last non-empty line equals `PASS` -> move current chunk
+  to `Done` (rollback header preserved).
+- Last non-empty line starts with `FAIL: ` and has non-empty text after the
+  prefix -> move current chunk to `Blocked` (rollback header preserved,
+  blocked-reason header added with kind `FAIL` and the verbatim text after
+  `FAIL: ` as the reason) and return exit code 3.
+- Anything else (no output, missing prefix, empty FAIL text, etc.) is
+  treated as `INVALID` -> move to `Blocked` (rollback header preserved,
+  blocked-reason header added with kind `INVALID`) and return exit code 3
+  with a message that the verifier output did not end with `PASS` or
+  `FAIL: <text>`.
+
+The blocked-reason header is stripped again when a blocked chunk is
+moved out (to `Current` or `Done`); see section 4.4a.
+
+Exit codes: 0 success, 2 user/precondition error, 3 verification
+FAIL/INVALID, dispatcher's exit code on worker failure.
+
+### 9.5 `Work - Undo`
+
+Inputs: as in section 4.6.
+
+Behavior follows section 4.6 step by step. Provide:
+
+- `git_commit_exists(repo, hash)` via `git cat-file -e <hash>^{commit}`.
+- `git_reset_hard(repo, hash)` via `git reset --hard <hash>`.
+- `git_clean_fdx(repo)` via `git clean -fdx`.
+- Strip header before writing chunks back to `Next`.
+
+Exit codes: 0 success, 2 user/precondition error including preflight
+failures.
+
+### 9.6 `Workers/Default`
+
+Inputs: as in section 4.2.
+
+Behavior:
+
+```
+def main():
+    args = parse()
+    bootstrap = "Read the file at '" + absolute(args.prompt) + \
+                "' and follow the instructions exactly."
+    if args.tail.strip():
+        bootstrap += "\n\n" + tail_prefix(language) + "\n" + args.tail.strip()
+    binary = resolve_harness_binary("opencode")  # or chosen harness
+    if binary is None:
+        print_error("Could not start '<harness>'. Install it or update this wrapper.")
+        return 127
+    cmd = build_harness_command(binary, args.mode, bootstrap)
+    for path in parse_csv(args.context_files):
+        cmd += harness_attach_flags(path)        # may be []
+    if args.dry_run:
+        print(escape_for_shell(cmd)); return 0
+    if args.new_window and args.mode == "tui" and is_windows():
+        spawn_detached_new_console(cmd, cwd=args.workspace or cwd)
+        return 0
+    try:
+        return subprocess_run(cmd, cwd=args.workspace or cwd).exit_code
+    except missing_binary:
+        print_error("Could not start '<harness>'.")
+        return 127
+```
+
+`resolve_harness_binary(name)`:
+- First try a `which` equivalent.
+- On Windows, if not found, try `%APPDATA%\npm\<name>.cmd`.
+- Return `None` if nothing works.
+
+`tail_prefix(language)` returns the translated form of:
+`After reading the files above, the user asked you to do this:`
+
+`spawn_detached_new_console(cmd, cwd)` starts the harness in a new console
+window detached from the launching process. On Python/Windows this is
+`subprocess.Popen(cmd, cwd=cwd, creationflags=CREATE_NEW_CONSOLE)`. The
+wrapper returns 0 immediately without waiting on the child.
+
+Working directory for the harness subprocess is the resolved `--workspace`
+path when provided; otherwise the wrapper's current working directory.
+
+### 9.7 `WorkflowLog`
+
+A tiny shared utility imported by the workflow scripts (`Work - Do`,
+`Work - Undo`, `Workspace - Create`, `Workspace - Remove`). It exposes one
+function:
+
+- `append_workspace_log(workspace, event, message)`: append a single line
+  `[YYYY-MM-DD HH:MM:SS] <event>: <message>\n` to `<workspace>/log.txt`
+  (UTF-8). Any I/O failure is swallowed silently; logging must never break a
+  workflow script.
+
+Canonical event names per script (best-effort breadcrumbs; the file is
+plain text and is not parsed by any script, it exists for human
+inspection):
+
+- `Work - Do`: `work-do.start`, `work-do.idle`, `work-do.blocked`,
+  `work-do.current`, `work-do.queue`, `work-do.execute`, `work-do.verify`,
+  `work-do.done`.
+- `Work - Undo`: `work-undo.start`, `work-undo.idle`,
+  `work-undo.preflight`, `work-undo.rollback`, `work-undo.done`.
+- `Workspace - Create`: `workspace-create.init`,
+  `workspace-create.worktree`, `workspace-create.done`.
+- `Workspace - Remove`: `workspace-archive.start`,
+  `workspace-archive.blocked`, `workspace-archive.snapshot`,
+  `workspace-archive.worktree`, `workspace-archive.done`.
+
+---
+
+## 10. OS launcher recipes
+
+Pick the recipe that matches the chosen OS. Each launcher invokes the
+dispatcher with the appropriate prompt path and worker.
+
+The dispatcher is invoked with the project's interpreter for the chosen
+programming language (for example: `py` on Windows for Python, `python3` on
+macOS/Linux, `bash` for shell scripts, `node` for Node.js).
+
+### 10.1 Windows: `.lnk` shortcuts via PowerShell COM
+
+Create shortcuts with `WScript.Shell`:
+
+```
+$w = New-Object -ComObject WScript.Shell
+$s = $w.CreateShortcut("<absolute path to .lnk file>")
+$s.TargetPath = "<interpreter binary, for example 'py' or 'node'>"
+$s.Arguments = '"<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<prompt path>" [--workspace "<path>"] --mode tui --agent-name "<Agent Name>"'
+$s.WorkingDirectory = "<absolute working directory>"
+$s.Save()
+```
+
+Notes:
+- Top-level `Open Agent.lnk` uses an absolute prompt path to
+  `Prompts/Installation Agent.md` initially. After installation switch it to
+  `Prompts/Workspace Agent.md` (same launcher file, only the prompt path
+  changes).
+- Per-workspace launchers use a relative prompt path (`Prompts/<Agent>.md`)
+  and `--workspace "."`, with `WorkingDirectory` set to the workspace path.
+
+### 10.2 macOS: `.command` scripts
+
+Each launcher is an executable shell script with a `.command` extension so
+the user can double-click it from Finder.
+
+```
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+exec "<interpreter>" "<abs path to Scripts/Agent.<ext>>" \
+  --worker "Default" \
+  --prompt "<prompt path>" \
+  --workspace "." \
+  --mode tui \
+  --agent-name "<Agent Name>"
+```
+
+Make the file executable (`chmod +x`). For the top-level launcher omit the
+`--workspace` argument and use an absolute prompt path.
+
+### 10.3 Linux: `.desktop` entries
+
+```
+[Desktop Entry]
+Type=Application
+Name=<launcher label>
+Exec=<interpreter> "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<prompt path>" --workspace "<workspace path or omit>" --mode tui --agent-name "<Agent Name>"
+Path=<working directory>
+Terminal=true
+```
+
+Mark the file executable. For users who run from a terminal, you may
+additionally provide a plain shell wrapper similar to the macOS recipe.
+
+### 10.4 Switching the top-level launcher after installation
+
+At the end of installation, regenerate or edit the top-level launcher so its
+prompt argument points to `Prompts/Workspace Agent.md` (absolute path) and
+all other arguments stay identical. The launcher file name does not change.
+
+The Installation Agent must perform this switch through the OS-native
+launcher mechanism, not by editing the launcher file as plain text (Windows
+`.lnk` files in particular are a binary format and cannot be safely edited
+as text).
+
+**Windows (`.lnk`).** Re-open the existing shortcut via `WScript.Shell`,
+mutate only the `Arguments` field, and save in place:
+
+```
+$w = New-Object -ComObject WScript.Shell
+$s = $w.CreateShortcut("<absolute path to existing Open Agent.lnk>")
+$s.Arguments = '"<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<abs path to Prompts/Workspace Agent.md>" --mode tui --agent-name "Workspace Agent"'
+$s.Save()
+```
+
+`TargetPath`, `WorkingDirectory`, and the launcher file name stay identical;
+only the `--prompt` argument inside `Arguments` changes (and `--agent-name`
+if you choose to update the metadata label).
+
+**macOS (`.command`) and Linux (`.desktop`).** These are plain text files;
+regenerate them via the recipe in section 10.2 or 10.3 with the new prompt
+path, overwriting the existing file. Preserve the executable bit
+(`chmod +x`) after rewriting on macOS/Linux.
+
+After switching, the Installation Agent must verify the launcher still
+resolves to a valid harness command (per section 8.2 step 7) before
+reporting installation complete.
+
+---
+
+## 11. Harness adaptation guide
+
+Bootstrap pattern (fixed, see section 4.2):
+
+- Bootstrap line 1: `Read the file at '<absolute prompt path>' and follow the instructions exactly.`
+- If tail is non-empty: add a blank line, the translated tail prefix, a
+  newline, then the tail text.
+
+The harness command surrounding the bootstrap depends on the harness. Two
+examples follow.
+
+### 11.1 Opencode
+
+- CLI/unattended: `opencode run "<bootstrap>"`
+- TUI/interactive: `opencode --prompt "<bootstrap>"`
+- Context attach: for each path in `--context-files`, append
+  `--context <path>` to the command. If a build of opencode does not
+  recognize the flag, drop it or ignore silently.
+
+Resolution: try `which opencode`. On Windows, npm installs leave shims under
+`%APPDATA%\npm\opencode.cmd`; fall back to that path before failing.
+
+### 11.2 Claude Code (example)
+
+Not authoritative -- these are illustrative defaults. Always re-derive
+from `claude --help` at scaffold time per interview question 5.
+
+- CLI/unattended: `claude -p "<bootstrap>"` (the `-p` / `--print` flag
+  runs Claude Code in non-interactive print mode).
+- TUI/interactive: `claude "<bootstrap>"` (positional initial prompt;
+  starts the interactive session).
+- Context attach: Claude Code does not take ad-hoc file flags from the
+  CLI; mention the files inside the bootstrap text or drop the
+  `--context-files` hint.
+
+Resolution: try `which claude`. Adjust to your local installation.
+
+### 11.3 Adding a new harness
+
+Ask the user for:
+- the binary name and an OS-specific fallback path if applicable,
+- the unattended invocation pattern,
+- the interactive invocation pattern,
+- whether the harness supports attaching files (and if so, the flag).
+
+Build a worker wrapper that follows the structure in section 9.6 and the
+bootstrap shape in section 4.2.
+
+---
+
+## 12. Programming language adaptation guide
+
+Whatever language you pick, the standard library must offer:
+
+- Argument parsing with long flags and required-value support.
+- Subprocess execution with argv arrays (no shell interpolation).
+- Filesystem operations: exists, mkdir, copy file, copy tree, move, rename.
+- Path normalization to absolute paths.
+- UTF-8 text read and write.
+- Date/time formatting for the archive timestamp suffix (`YYYY-MM-DD_HHMMSS`).
+- Running git via subprocess; you do not need a git library.
+
+For Python: use `argparse`, `subprocess`, `shutil`, `pathlib`, `datetime`.
+For Bash: use `getopts` or manual parsing, `cp -r`, `mv`, `mktemp`, `git`.
+For Node.js: use `process.argv` parsing (or `node:util` `parseArgs`),
+`child_process.spawnSync`, `fs/promises`, `path`.
+For Go: use `flag`, `os/exec`, `io/fs`, `path/filepath`, `time`.
+
+---
+
+## 13. Verification checklist
+
+After scaffolding, run these checks. Do not ask the user; do them yourself
+and report results.
+
+0. **Cleanup pass.** Before running the remaining checks, walk the entire
+   workflow root and delete every file or directory that is not part of
+   the file manifest in section 7. This explicitly includes:
+   - any scratch or test files you created while writing or verifying
+     scripts (e.g. `test_*.py`, `tmp.md`, sample inputs, throwaway
+     `Workspaces/<name>/` directories used to dry-run create/remove);
+   - any backup or editor artifacts (`*.bak`, `*~`, `.DS_Store`,
+     `__pycache__/`, `*.pyc`, `node_modules/`, `.cache/`, etc.);
+   - any extra documentation files you produced beyond the manifest
+     (summaries, change notes, READMEs inside subdirectories);
+   - any partially generated files left over from aborted attempts.
+   The only exceptions are: this `INSTALL.md` (consumed input), and the
+   files explicitly listed in section 7. The four template
+   `Work/*.md` files and the empty `Workspaces/__archive__/` directory
+   are part of the manifest and must remain. Empty placeholder
+   directories from section 7 (`Configuration/`, `Documentation/`,
+   `Implementation/`) must also remain. After this pass, the workflow
+   root tree must match section 7 exactly, with nothing extra.
+
+1. Every file from section 7 exists and is non-empty (zero-byte files are a
+   failure).
+2. All generated scripts are syntactically valid (compile, parse, or
+   lint depending on the language).
+3. Dispatcher dry-run with the Installation Agent prompt prints a valid
+   harness command. Example: invoke the dispatcher with
+   `--worker Default --prompt <abs Installation Agent path> --mode cli --dry-run`.
+4. Each per-agent launcher has the expected target, arguments, and working
+   directory per section 10.
+5. `Work - Do` chunk parser round-trip: feed the parser a synthetic input of
+   two non-empty chunks separated by `---`, write it back via the writer,
+   and confirm the content is unchanged except for normalized trailing
+   whitespace. (The template `Work/*.md` files are empty by design and are
+   not used for this check.)
+6. `Workspace - Remove` refuses to run without `--synced`.
+7. `Work - Do` refuses to run when `Blocked` or `Current` is non-empty
+   without the matching action flag.
+8. End-to-end UTF-8: when the chosen natural language uses non-ASCII
+   characters, run the dispatcher in `--dry-run` against the Installation
+   Agent prompt and confirm the printed harness command, including the
+   translated bootstrap sentence, appears correctly (no mojibake, no
+   `UnicodeEncodeError`). Also append a non-ASCII test line via
+   `WorkflowLog` to a scratch workspace and confirm the resulting
+   `log.txt` reads back as UTF-8.
+
+If any check fails, repair before handoff.
+
+### 13.5 Optional end-to-end rehearsal
+
+Run this protocol only if the user opted in at interview question 6.
+Its purpose is to exercise every script and launcher wiring against a
+throwaway workspace and to roll the workflow root back to its
+post-scaffold state when finished. The rehearsal must leave **no
+artifacts** behind: no extra files, no extra git history in template
+repos, no extra entries in `__archive__/`, and no change to the
+top-level launcher.
+
+Harness calls are stubbed throughout: every dispatcher invocation that
+would normally spawn the AI harness is made with `--mode cli --dry-run`,
+so no tokens are spent and no model round-trips happen. Real subprocess
+calls are limited to the workflow scripts themselves and to `git`.
+
+Protocol:
+
+1. **Snapshot.** Copy the entire workflow root (every file and
+   directory) to a sibling temp directory, for example
+   `<workflow-root>/../<workflow-root-name>.rehearsal-backup-<timestamp>/`.
+   This is the rollback target; it must be a faithful copy that
+   preserves file modes, the executable bit on launchers, and the full
+   contents of every git repo (including `.git/`). If the snapshot
+   cannot be created, skip the rehearsal and report the reason; do
+   not attempt the rehearsal without a working rollback.
+
+2. **Prepare repos.** In `Workspaces/__template__/`, initialize the
+   three default placeholder directories (`Configuration/`,
+   `Documentation/`, `Implementation/`) as real git repos with one
+   empty initial commit each (`git init`, `git commit --allow-empty -m
+   rehearsal`). These mirror what the `Installation Agent` does on a
+   real install. No upstream is configured; everything stays local.
+
+3. **Switch the launcher (simulated).** Update the top-level `Open
+   Agent` launcher so its prompt argument points to
+   `Prompts/Workspace Agent.md`, exactly the operation described in
+   section 10.4. Verify it parses.
+
+4. **Create a workspace.** Invoke
+   `Scripts/Workspace - Create --workspace rehearsal/smoke --branch
+   workspace/rehearsal/smoke`. Assert:
+   - the workspace directory exists under `Workspaces/rehearsal/smoke/`,
+   - the three repos are attached as worktrees on the requested branch,
+   - the five per-agent launchers exist and parse,
+   - the per-workspace artifacts (`Issue.md`, `Plan.md`, ..., `Work/`)
+     were copied from the template.
+
+5. **Queue a synthetic task and run `Work - Do`.** Write a single
+   chunk into `Workspaces/rehearsal/smoke/Work/Next.md` (something
+   trivial, e.g. "touch a file in Implementation/"). Invoke
+   `Scripts/Work - Do --workspace Workspaces/rehearsal/smoke --mode cli
+   --dry-run`. Assert:
+   - the chunk moved out of `Next.md`,
+   - `Current.md` contains the chunk with a valid rollback header
+     (section 4.4) carrying real commit hashes from the three repos,
+   - the dispatcher was invoked with the execute prompt and the verify
+     prompt (both as dry runs),
+   - because `--dry-run` was set, the chunk stayed in `Current.md` per
+     section 4.5 step 4 (skip verifier-output parsing; do not move the
+     current chunk).
+
+6. **Exercise `--current-action to-done`.** Re-invoke `Work - Do` with
+   `--current-action to-done`. Assert the chunk now lives in
+   `Done.md` with its rollback header intact.
+
+7. **Exercise `Work - Undo`.** Invoke
+   `Scripts/Work - Undo --workspace Workspaces/rehearsal/smoke --count
+   1`. Assert:
+   - the chunk returned to `Next.md` without its rollback header,
+   - each repo's `HEAD` matches the hash that was captured in the
+     rollback header (preflight succeeded, reset worked).
+
+8. **Archive the workspace.** Invoke
+   `Scripts/Workspace - Remove --workspace rehearsal/smoke --synced`.
+   Assert:
+   - the workspace directory is gone,
+   - the non-repo files landed under
+     `Workspaces/__archive__/rehearsal/smoke/`,
+   - the three worktree pointers were removed (`git worktree list` in
+     each template repo no longer mentions the rehearsal path),
+   - the script refused the call earlier when `--synced` was omitted
+     (re-run a separate negative case to confirm exit code 2).
+
+9. **Restore.** Delete every child of the workflow root **except**
+   `INSTALL.md` (the user-supplied input), then copy the snapshot from
+   step 1 back into place verbatim. Verify by spot-checking that:
+   - the three placeholder directories are empty again (not git repos),
+   - `__archive__/` is empty,
+   - the top-level launcher targets `Prompts/Installation Agent.md`
+     again,
+   - no `rehearsal/smoke` workspace remains.
+   After restoration, delete the snapshot directory.
+
+10. **Report.** Print a short summary listing each of steps 2-8 as PASS
+    or FAIL with the exit code observed and any captured error. If any
+    step failed, leave the snapshot intact and tell the user where it
+    lives so they can inspect it manually; otherwise confirm the
+    workflow root is byte-equivalent to its post-scaffold state.
+
+The rehearsal is best-effort and additive: a failure here does **not**
+block handoff (the scaffolded distributive is still usable), but the
+failure details must be surfaced to the user.
+
+---
+
+## 14. Final handoff
+
+When the verification checklist passes (and the optional rehearsal in
+section 13.5 has either completed successfully or been skipped per
+interview question 6), tell the user briefly, in the chosen language,
+that the distributive is ready and that opening the top-level launcher
+will start the `Installation Agent`. If the rehearsal ran, include a
+one-line PASS/FAIL summary. Do not push anything to any remote. Stop.
+
+---
+
+## 15. Glossary
+
+- **Workspace** - a directory created from `Workspaces/__template__`
+  containing per-workspace artifacts, prompts, and possibly git worktrees.
+- **Worker** - a logical concept: the AI session that does the work.
+- **Worker wrapper** - a script under `Scripts/Workers/` that knows how to
+  invoke a specific AI harness with a bootstrap string.
+- **Dispatcher** (`Agent` script) - the single entry point through which all
+  launchers and scripts spawn worker wrappers.
+- **Bootstrap** - the short text the dispatcher passes to a worker wrapper,
+  which the worker wrapper passes to its harness; tells the AI to read a
+  prompt file and follow it.
+- **Tail** - optional user-provided text appended to the bootstrap with a
+  fixed prefix.
+- **Mode** - `cli` (unattended) or `tui` (interactive).
+- **Chunk** - a block of text in a `Work/*.md` queue file separated by lines
+  of `---`.
+- **Rollback header** - a single HTML-comment line at the top of a `Done`
+  chunk that records per-repository commit hashes for safe rollback.
+- **Workspace branch** - the git branch name shared by all repositories of a
+  workspace, used as the branch for every worktree.
