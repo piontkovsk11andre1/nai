@@ -1,223 +1,244 @@
-# 🌿 Nai
+# Nai — Naive Agentic Infrastructure
 
-### Naive Agentic Infrastructure
+A 2026-style delivery workflow for AI coding agents, tightly integrated
+with git. It is not a framework you import and not a CLI you install —
+it is a small set of markdown prompts and scripts that an AI agent
+scaffolds into your project, and that you then drive yourself.
 
-A self-installing, agent-driven delivery workflow. There is no CLI to
-install and no package to download — you hand a single specification
-prompt ([INSTALL.md](INSTALL.md)) to any capable AI coding agent and it
-scaffolds the whole infrastructure on your machine, adapted to your
-language, OS, scripting runtime, and AI harness.
-
-This README describes **what you end up with after installation** and
-**how to live with it day to day**. For the underlying spec, see
-[INSTALL.md](INSTALL.md).
+It works on any repository: a greenfield prototype, a long-lived
+monorepo, or several unrelated repos pulled into one workspace.
 
 ---
 
-## ⚡ Install in one step
+## Install
 
-Open any AI coding agent (Claude Code, opencode, Codex, Copilot Chat, …)
-in an empty directory and send it one message:
+In an empty directory, open any AI coding agent (Claude Code, opencode,
+Codex, Copilot Chat, …) and send one message:
 
 > Please read <https://raw.githubusercontent.com/piontkovsk11andre1/nai/main/INSTALL.md>
 > and implement the workflow.
 
-The agent will interview you (natural language, OS, scripting language,
-install path, AI harness), scaffold every file, run a verification pass,
-and stop. Your next action is to **double-click the top-level launcher**
-it produced.
+That agent acts as a **scaffolder**: it asks a few questions (natural
+language, OS, scripting language, AI harness) and produces the files
+above. The directory it leaves behind is a self-contained, portable
+distributive pinned to your platform and harness — copy it to another
+machine and it works as-is.
+
+The first time you open the top-level launcher it runs a one-off
+**Installation Agent** that wires up your actual repos and naming
+conventions, asks about any add-ons or tweaks you want, and then
+rewrites the launcher to open the day-to-day **Workspace Agent** from
+then on.
+
+After that, just open the top-level launcher again and ask the
+**Workspace Agent** to walk you through the workflow — it will show
+you how to create a workspace, where each role plugs in, and what
+ends up in every file.
 
 ---
 
-## 📦 What you get on disk
+## What you actually get
 
-After scaffolding finishes, the install path looks roughly like this:
+A directory like this, generated on first install:
 
 ```
-Open Agent.(lnk|command|desktop)     ← top-level launcher
+Open Agent.(lnk|command|desktop)   top-level launcher
 Prompts/
-  Installation Agent.md              ← runs on first launch
-  Workspace Agent.md                 ← runs from second launch onward
+  Installation Agent.md
+  Workspace Agent.md
 Scripts/
-  Agent.<ext>                        ← dispatcher
+  Agent.<ext>                       dispatcher
   Workspace - Create.<ext>
   Workspace - Remove.<ext>
   Work - Do.<ext>
   Work - Undo.<ext>
-  WorkflowLog.<ext>
-  Workers/
-    Default.<ext>                    ← wrapper around your AI harness
+  Workers/Default.<ext>             AI harness wrapper
 Workspaces/
-  Backlog.md, Changelog.md
-  __archive__/                       ← archived workspaces land here
-  __template__/                      ← cloned for every new workspace
-    Configuration/  Documentation/  Implementation/
-    Workspace.md  Plan.md  Issue.md  Status.md  …
-    Prompts/   (Git / Research / Planner / Worker / Reviewer)
-    Work/      (Next / Current / Blocked / Done .md)
+  Backlog.md
+  Changelog.md
+  __template__/                     copied for every new workspace
+  __archive__/                      finished workspaces land here
 ```
 
-Concretely, you get:
-
-- **One launcher** at the top that opens an AI agent in the right mode.
-- **A `Default` worker wrapper** that already knows how to call your AI
-  harness in both unattended (`cli`) and interactive (`tui`) modes.
-- **A workspace template** with per-agent prompts, per-agent launchers,
-  and a markdown-backed work queue.
-- **A scripts layer** (`Workspace - Create / Remove`, `Work - Do / Undo`,
-  dispatcher) — small, non-interactive, fail-loud on missing flags.
-
-Everything is in your chosen natural language; only protocol literals
-(`PASS`, `FAIL:`, `---`, CLI flag names, header markers) stay ASCII.
-
----
-
-## 🚀 First launch vs. every launch after
-
-The top-level launcher is the only thing you interact with from the
-filesystem. Its behavior changes once:
-
-1. **First launch** → opens the **Installation Agent**. It finalizes the
-   parts that were intentionally deferred during scaffolding: template
-   git repositories (and their initial commits), workspace naming and
-   branch conventions, optional framework mapping, and external issue
-   tracker wiring. As its last step it **rewrites the launcher itself**
-   to point at the Workspace Agent.
-2. **Every launch after** → opens the **Workspace Agent**, which is your
-   day-to-day orchestrator: create a workspace, archive a workspace, or
-   open a per-workspace agent.
-
-The launcher file name never changes; only the prompt it targets does.
-
----
-
-## 🧑‍💻 Day-to-day usage
-
-### Create a workspace
-
-Ask the Workspace Agent:
-
-> Create a workspace for ticket `FOO-123` about the auth refactor.
-
-It calls `Scripts/Workspace - Create` with a `--workspace` path and a
-`--branch` name. The script:
-
-- copies `Workspaces/__template__/` into the new workspace path,
-- attaches each template repo as a **git worktree** on the requested
-  branch (creating the branch if needed),
-- drops five numbered launchers inside the workspace:
-  `1. Open Git Agent`, `2. Open Research Agent`, `3. Open Planner
-  Agent`, `4. Open Worker Agent`, `5. Open Reviewer Agent`.
-
-### Work inside a workspace
-
-Open the launcher for the role you need. The intended flow:
-
-- **Research Agent** — asks for pre-context, then asks one question at a
-  time, writes findings into `Research.md`.
-- **Planner Agent** — reads `Issue` / `Research` / `Notes` / etc.,
-  produces `Plan.md` and a `Status.md` table.
-- **Worker Agent** — derives actionable chunks into `Work/Next.md` (one
-  blank-line-separated chunk per task, `---` between them), then drives
-  the work queue.
-- **Reviewer Agent** — writes `Changelog.md` and `PR.md`.
-- **Git Agent** — finalizes commits, syncs the workspace's
-  `Backlog` / `Changelog` into the global files in `Workspaces/`, and
-  handles explicit git operations on request.
-
-### Run the work queue
-
-The Worker Agent (or you, directly) invokes:
-
-- `Scripts/Work - Do` — moves the next chunk through
-  `Next` → `Current` → `Done` (or `Blocked` on failure). Before
-  executing, it captures a `<!-- rollback: RepoA=<hash> RepoB=<hash> -->`
-  header so the chunk can be safely rolled back later. The verifier's
-  last non-empty line must be exactly `PASS` or `FAIL: <one-line
-  reason>`. Anything else is treated as a blocked-with-reason chunk.
-- `Scripts/Work - Undo --count N` — `git reset --hard` + `git clean
-  -fdx` on every repo recorded in the rollback headers of the last N
-  done chunks, then returns those chunks to the top of `Next`.
-
-`Work - Do` and `Work - Undo` are deliberately **non-interactive**: a
-missing decision flag (e.g. `--blocked-action`, `--current-action`,
-`--count`) makes the script exit non-zero with a message naming the
-exact flag to add.
-
-### Archive a workspace
-
-When the work has shipped:
+Each new workspace (one per ticket / feature / experiment) is a copy of
+`__template__` with git worktrees attached for the repos you work on,
+plus its own prompts, plan, status, and work queue. A typical workspace
+looks like this:
 
 ```
-Scripts/Workspace - Remove --workspace <path> --synced
+Workspaces/PROJ-123-add-login/
+  1. Open Git Agent              per-role launchers
+  2. Open Research Agent
+  3. Open Planner Agent
+  4. Open Worker Agent
+  5. Open Reviewer Agent
+  Workspace.md                   conventions + repo layout for this workspace
+  Issue.md                       the task (pasted in, or pulled from a tracker)
+  Research.md                    findings from the Research role
+  Plan.md                        plan produced by the Planner role
+  Status.md                      Part / Expected / Current / % / Last Checked
+  PR.md                          draft PR description, kept current as you work
+  Backlog.md                     deferred items discovered along the way
+  Changelog.md                   per-workspace changelog
+  Framework.md                   build / test / run / verify notes
+  Assignments.md                 which worker handles which role (human-facing)
+  Notes.md                       free-form scratchpad
+  Prompts/
+    Git Agent.md
+    Research Agent.md
+    Planner Agent.md
+    Worker Agent.md
+    Reviewer Agent.md
+    Work - Execute.md            used by Work - Do to run a chunk
+    Work - Verify.md             used by Work - Do to check the result
+  Work/
+    Next.md                      queued chunks
+    Current.md                   the chunk being executed (with rollback header)
+    Done.md                      finished chunks (rollback headers preserved)
+    Blocked.md                   failed chunks (blocked-reason header attached)
+  repo-a/                        git worktree on the workspace branch
+  repo-b/                        git worktree on the workspace branch
 ```
 
-`--synced` is mandatory — it forces you to run the Git Agent's
-backlog/changelog sync first. The script then moves everything to
-`Workspaces/__archive__/<same-path>/`, detaches the worktrees, and
-prunes stale worktree records. **Nothing is ever deleted.**
+## How the workflow looks
+
+```mermaid
+flowchart LR
+    G[Git Agent] --> R[Research Agent]
+    R --> P[Planner Agent]
+    P --> W[Worker Agent]
+    W --> V[Reviewer Agent]
+    V --> G
+
+    subgraph Queue [Work queue]
+        N[Next] --> C[Current] --> D[Done]
+        C -.fail.-> B[Blocked]
+    end
+
+    W -. drives .-> Queue
+```
+
+Five roles, each a separate AI session with its own prompt and its own
+small set of input/output files. You move between them at your own pace;
+nothing is automatic across role boundaries.
+
+Inside the Worker role, every chunk in the queue goes through the same
+loop:
+
+```mermaid
+flowchart LR
+    Pop[Pop chunk + capture git HEADs] --> Execute
+    Execute --> Verify
+    Verify -- PASS --> Done
+    Verify -- "FAIL: reason" --> Blocked
+```
+
+Execute and Verify are two separate prompts and can use two different
+models or workers (e.g. a fast model to do the change, a stricter one to
+check it).
 
 ---
 
-## 🧭 Dispatcher contract
+## How you run it
 
-Every launcher and every script ultimately calls a single dispatcher
-(`Scripts/Agent.<ext>`) with these flags:
+You have three equally valid entry points, pick whichever fits:
 
-| Flag | Purpose |
-|------|---------|
-| `--worker <name>` | Worker wrapper under `Scripts/Workers/` (default `Default`). |
-| `--prompt <path>` | Prompt file the agent should read (required). |
-| `--workspace <path>` | Working directory for the harness subprocess. |
-| `--mode cli\|tui` | Unattended vs interactive (default `cli`). |
-| `--tail <text>` | Extra user instruction appended to the bootstrap. |
-| `--agent-name <text>` | Display label, metadata only. |
-| `--context-files <csv>` | Hint list of files to attach if the harness supports it. |
-| `--dry-run` | Print the harness command instead of running it. |
-| `--new-window` | Windows TUI hint: spawn detached console and return. |
-
-The dispatcher does nothing else — it validates `--prompt`, resolves the
-worker, and forwards. Swapping AI harnesses is just a matter of adding a
-new file under `Scripts/Workers/`.
-
----
-
-## 🛡️ Safety guarantees
-
-- **No remote push, ever**, unless you explicitly ask for it.
-- **Workspaces are archived, never deleted.** `Workspace - Remove`
-  refuses to run without `--synced`.
-- **`Work - Undo` is destructive by design** — `git reset --hard` plus
-  `git clean -fdx`. Dirty work trees on rolled-back repos are erased.
-  That is the price of the safety net.
-- **Scripts are non-interactive.** Missing arguments fail with a clean
-  non-zero exit and a message naming the exact flag.
-- **UTF-8 end to end**, including the Windows console code page, so
-  translated strings survive every subprocess hop.
+- **Double-click a launcher.** A tactile, OS-native entry point: the
+  launchers are real shortcuts (`.lnk` on Windows, `.command` on macOS,
+  `.desktop` on Linux), so they sit in Explorer / Finder / your file
+  manager and integrate with the OS UI like any other app — pin them
+  to the taskbar, drop them in the Dock, put them on the desktop. One
+  top-level launcher for orchestration, five per-workspace launchers
+  (Git / Research / Planner / Worker / Reviewer) for each role.
+- **From your editor.** Ask an AI agent to integrate Nai with your
+  editor (VS Code, JetBrains, Zed, whatever) — it knows the layout and
+  will pick a sensible way to surface every knob (tasks, run configs,
+  status bar buttons, a side panel, …) for the editor you use.
+- **From a pipeline.** Every entry point under `Scripts/` is
+  non-interactive by design — including the agent dispatcher itself.
+  `Scripts/Agent --prompt <path/to/role-prompt.md> --workspace <ws> --mode cli`
+  runs any of the five roles unattended (the harness is invoked in its
+  non-interactive mode: `opencode run`, `claude -p`, etc.) and returns
+  an exit code. Missing a decision flag on any script exits non-zero
+  with a message naming the exact flag. The whole surface drops
+  cleanly into Make targets, CI jobs, git hooks, or any other
+  automation.
 
 ---
 
-## 🎨 What's adaptable
+## Why bother
 
-Decided at install time, never hard-coded:
+A few things that make this different from "just prompting an agent":
 
-- **Natural language** — every prompt, comment, and printed message is
-  translated. Protocol literals stay ASCII.
-- **OS** — Windows (`.lnk`), macOS (`.command`), Linux (`.desktop`).
-- **Scripting language** — Python (default, stdlib only), Bash, Node.js,
-  Go.
-- **AI harness** — `opencode` by default; the installer derives
-  invocation patterns from `<harness> --help` and writes a working
-  wrapper. Additional wrappers can be added later under
-  `Scripts/Workers/`.
-
-The full specification — invariants, per-file specs, per-script
-behavior, launcher recipes, harness guide, verification checklist —
-lives in [INSTALL.md](INSTALL.md). That file is the single source of
-truth; this README only orients you once the scaffolding is on disk.
+- **Hard execute/verify loop.** Verification is a separate session with
+  its own prompt that must emit `PASS` or `FAIL: <reason>` as its last
+  line. Anything else is treated as blocked, with the reason recorded
+  in `Work/Blocked.md`.
+- **Git-synchronized rollback.** Before each chunk runs, the `HEAD` of
+  every repo in the workspace is recorded into a header attached to the
+  chunk. Ask the Worker (or Git) Agent to undo the last N steps and it
+  resets every affected repo back to its captured state and puts the
+  chunks back on the queue. You can let an agent try aggressive changes
+  and roll the whole thing back with one request.
+- **A planning surface that stays useful.** `Status.md` is a simple
+  table (Part / Expected / Current / Completion % / Last Checked) the
+  Planner and Reviewer keep current; any row below 100% feeds the next
+  planning pass.
+- **Workspace isolation via git worktrees.** Multiple workspaces can
+  point at the same repos on different branches without stepping on
+  each other.
+- **Archive, don't delete.** Workspaces are never wiped — when you tell
+  the Git Agent you are done, it syncs the workspace's backlog /
+  changelog upstream and moves the whole workspace into `__archive__/`.
+- **No remote pushes unless you ask.** The scripts never push.
 
 ---
 
-## 📄 License
+## What you can change
 
-[MIT](LICENSE).
+- **Prompts.** Every agent's behavior lives in a markdown file under
+  `Workspaces/__template__/Prompts/`. Edit them in the template to
+  affect every new workspace, or inside a specific workspace for one-off
+  tweaks.
+- **Workers.** Drop a new script next to `Scripts/Workers/Default` and
+  pass `--worker <name>` to switch harnesses. Since the worker is just
+  a script in your program, it can call any API over any protocol —
+  local CLI, remote model, HTTP service, whatever you wire up.
+- **Status / backlog / changelog formats.** These are plain markdown
+  used by agents, not parsed by scripts — change the shape if it
+  doesn't fit.
+- **Natural language, OS, scripting language, harness.** All chosen at
+  install time; the same prompts and contracts work for any
+  combination.
+- **Anything else.** When the Installation Agent runs from the top-level
+  launcher it asks for add-ons, tweaks, or free-form comments before
+  finalizing the install — that is the moment to extend Nai with extra
+  roles, scripts, or conventions, or to strip out features you do not
+  want.
+
+---
+
+## Try it on an existing repo
+
+Pick a project you are already working on and try a single round-trip:
+
+1. Install (or copy) Nai into a fresh directory next to (not inside) the repo,
+   and let the Installation Agent attach the repo to the template.
+2. Create a workspace for one small, reversible task. Either point the
+   Workspace Agent at your issue tracker, or just ask to write the task into
+   `Issue.md`.
+3. Ask the Workspace Agent to run Research, Planner, and Worker in turn —
+   each role already knows what to do. After review and any follow-up
+   passes to drive `Status.md` to 100%, look at the diff, `PR.md`, and
+   `Changelog.md`, and decide whether the workflow is worth keeping.
+
+---
+
+## More
+
+The full specification (per-file contracts, per-script behavior,
+launcher recipes, harness guide, verification checklist) lives in
+[INSTALL.md](INSTALL.md). This README only describes what you live with
+day to day.
+
+[MIT](LICENSE) licensed.

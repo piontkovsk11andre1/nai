@@ -92,9 +92,9 @@ acknowledge in one short sentence, then ask the next question. After question
 Keep the scaffolding interview minimal. Only collect what is needed to
 produce a clean, generic distributive on disk. Everything else (template
 git repositories, naming/branch conventions, framework mapping, external
-issue tracker) is deferred to the `Installation Agent`, which the user
-will run later on their own machine through the top-level launcher. Do
-not ask those deferred questions here.
+issue tracker, optional integrations / add-ons) is deferred to the
+`Installation Agent`, which the user will run later on their own machine
+through the top-level launcher. Do not ask those deferred questions here.
 
 The one exception is the AI harness: the `Default` worker wrapper must be
 fully functional from the very first launch (the top-level launcher
@@ -177,10 +177,13 @@ The scaffolded distributive must ship as a clean, generic baseline:
   the user accepts the default). It must work end to end at first launch
   so the top-level launcher can immediately open the `Installation Agent`
   through it. The `Installation Agent` does not reconfigure this wrapper.
-- `Workspaces/__template__/Configuration/`, `Documentation/`, and
-  `Implementation/` are created as empty placeholder directories. They are
-  not git repositories. The `Installation Agent` turns the ones the user
-  keeps into real repositories and ensures each has a `HEAD` commit.
+- `Workspaces/__template__/` ships with **no** repository placeholders.
+  The scaffolder creates the template root and its workflow files
+  (`Prompts/`, `Work/`, per-workspace markdown stubs) but no
+  `Configuration/`, `Documentation/`, `Implementation/`, or any other
+  repo directories. The `Installation Agent` collects the user's actual
+  repositories (URL + optional branch + optional folder name) and
+  creates the directories and git state on the user's machine.
 - `Workspaces/__template__/Workspace.md` uses the default naming and
   branch conventions described in section 8.5. The `Installation Agent`
   rewrites them to match the user's actual conventions.
@@ -218,9 +221,12 @@ Behavior:
 - Resolve the worker display name to `Scripts/Workers/<name>.<ext>`, restricted
   to that folder. Sanitize the name by stripping every character outside
   letters, digits, space, hyphen, underscore, and dot; reject empty results.
-  After sanitization, resolve the candidate path and reject it if its parent
-  is not the `Scripts/Workers/` directory (this rules out `..`, absolute
-  paths, or any other escape attempt).
+  Also reject names that begin with a dot or consist only of dots and
+  spaces after sanitization (this rules out things like `.bashrc` or
+  `..` slipping through the alphabet check). After sanitization, resolve
+  the candidate path and reject it if its parent is not the
+  `Scripts/Workers/` directory (this rules out `..`, absolute paths, or
+  any other escape attempt).
 - Build a subprocess command that invokes the resolved worker script with all
   passthrough arguments, normalizing `--context-files` to absolute paths.
 - Forward the subprocess exit code as the dispatcher exit code.
@@ -235,10 +241,12 @@ through. Each wrapper:
 
 - Builds a **bootstrap** string for its harness in this exact shape:
   - line 1: the translated form of `Read the file at '<absolute-prompt-path>' and follow the instructions exactly.`
-  - if a non-empty `--tail` is provided, append a blank line, the translated
-    form of the fixed prefix
+  - if `--tail` is provided and contains at least one non-whitespace
+    character (i.e. `tail.strip()` is non-empty), append a blank line,
+    the translated form of the fixed prefix
     `After reading the files above, the user asked you to do this:`, a
-    newline, then the tail text verbatim.
+    newline, then the tail text verbatim. Whitespace-only tails are
+    treated as absent and the bootstrap stops at line 1.
 - The path token (single-quoted absolute prompt path) and the user's tail
   text are inserted verbatim into the translated sentences and must not be
   altered.
@@ -296,6 +304,12 @@ exactly this shape:
 - Repos are listed in case-insensitive alphabetical order by name.
 - Whitespace: single space between tokens. Single space after the colon and
   before the closing `-->`.
+- Zero-repo workspaces (no immediate subdirectory is a git working tree)
+  still get a header, in the canonical empty form
+  `<!-- rollback: -->` (single space after the colon, single space before
+  the closing `-->`, no tokens between them). `Work - Undo` treats such
+  headers as a no-op for the git phase and only restores the chunk text
+  to `Next`.
 
 ### 4.4a Blocked reason header
 
@@ -371,7 +385,10 @@ Decision order on each invocation:
      immediate subdirectory of the workspace that is a git working tree.
    - Prepend the rollback header (section 4.4) to the chunk.
    - Write it to `Current`.
-   - Continue to execution.
+   - Continue to execution. Note: this pop-and-write step runs even when
+     `--dry-run` is set; the dry-run guard only skips the verifier-output
+     parsing and the final `Current -> Done` move in step 4. A dry run
+     therefore still mutates `Next` and `Current` on disk.
 
 4. Execution and verification:
    - Build a tail string equal to the current chunk body (rollback header
@@ -383,10 +400,16 @@ Decision order on each invocation:
      remains in `Current` and exit with that code.
    - Otherwise invoke the dispatcher again with the verification worker and
      the verify prompt (`Prompts/Work - Verify` inside the workspace) and the
-     same tail. Capture both calls' stdout/stderr so the verifier's trailing
-     line can be inspected; replay the captured output to the user's
-     stdout/stderr after each call (streaming live is also acceptable as
-     long as the verifier's last non-empty line remains parseable).
+     same tail. The verifier dispatcher call must run with `--mode cli`
+     regardless of the mode requested by the caller, because the
+     `PASS` / `FAIL: <text>` protocol requires a captured stdout that
+     a TUI harness cannot provide. Capture the verifier's **stdout** so
+     its trailing line can be inspected; stderr may be streamed live or
+     captured for replay. Replay the captured output to the user's
+     stdout/stderr after the call (streaming stdout live is also
+     acceptable as long as the verifier's last non-empty line remains
+     parseable). The executor call may use whichever mode the caller
+     requested and may stream output live.
    - If the verifier dispatcher exits non-zero: move the current chunk to
      `Blocked` (preserving its rollback header, adding a blocked-reason
      header per section 4.4a with kind `DISPATCHER`) and exit with that
@@ -432,8 +455,13 @@ Behavior:
    commit exists in the corresponding repository. If any check fails, exit
    non-zero before making any changes.
 3. For each affected repository, run `git reset --hard <commit>` then
-   `git clean -fdx`. Stop on first repo failure with a non-zero exit; do not
-   try to recover, but report which repo and what failed.
+   `git clean -fdx`. When more than one chunk in the undo set references
+   the same repository, use the **oldest** captured hash (the rollback
+   header of the earliest chunk in the undo set, i.e. the deepest point
+   in history) so the working tree returns to the state that existed
+   before the first undone chunk. Stop on first repo failure with a
+   non-zero exit; do not try to recover, but report which repo and what
+   failed.
 4. Strip rollback headers from the undo set and prepend them to the top of
    `Next` in their original order. Write `Done` without the undone chunks.
 
@@ -664,6 +692,7 @@ Scripts/
   Workspace - Remove.<ext>
   Work - Do.<ext>
   Work - Undo.<ext>
+  WorkflowLog.<ext>                               (shared logging utility, section 9.7)
   Workers/
     Default.<ext>
 Workspaces/
@@ -704,6 +733,14 @@ Workspaces/
 
 `<ext>` matches the chosen programming language (`.py`, `.sh`, `.js`, `.go`,
 etc.). Launchers have OS-specific extensions per section 10.
+
+Note: each workspace also accumulates a plain-text `log.txt` at its root
+once `WorkflowLog` (section 9.7) writes to it. This file is created on
+demand by workflow scripts, is not part of the template, and is not
+listed in the manifest tree above; the verification cleanup pass
+(section 13 step 0) leaves any existing `log.txt` inside live workspaces
+alone but treats stray `log.txt` files outside `Workspaces/<name>/` as
+removable scratch.
 
 ### 5.3 Programming language
 
@@ -839,13 +876,11 @@ Create exactly these files. Do not create more, do not skip any.
 - `Workspaces/Backlog.md` - global backlog stub with entry format.
 - `Workspaces/Changelog.md` - global changelog stub with entry format.
 - `Workspaces/__archive__/` - empty directory; reserved.
-- `Workspaces/__template__/` - everything below.
-- `Workspaces/__template__/Configuration/`, `Documentation/`, `Implementation/` -
-  empty placeholder directories shipped with the distributive as the default
-  starter layout. They are not git repositories on first install; the
-  Installation Agent turns the ones the user keeps into real repos with at
-  least one `HEAD` commit. The user may add, rename, or remove these
-  placeholders during installation.
+- `Workspaces/__template__/` - everything below. The template ships with
+  **no** repository directories: only the workflow coordination
+  subdirectories (`Prompts/`, `Work/`) and the per-workspace markdown
+  files. The `Installation Agent` creates repository directories on
+  the user's machine based on the user's answers (section 8.2 step 2).
 
 ### Template per-workspace artifacts
 
@@ -922,13 +957,13 @@ artifacts".
 
 This agent is the **single owner** of every decision the scaffolder
 deliberately deferred (section 3): template git repositories, naming/branch
-conventions, framework mapping, and external issue tracker. The AI
-harness for the `Default` worker is **not** in this list -- it was
-configured by the scaffolder during interview question 5 and the
-`Installation Agent` itself is running through that wrapper. The
-scaffolder writes only generic defaults for the deferred items; this
-agent collects the real answers on the user's machine and rewrites the
-affected files in place.
+conventions, framework mapping, external issue tracker, and optional
+integrations / add-ons. The AI harness for the `Default` worker is
+**not** in this list -- it was configured by the scaffolder during
+interview question 5 and the `Installation Agent` itself is running
+through that wrapper. The scaffolder writes only generic defaults for
+the deferred items; this agent collects the real answers on the user's
+machine and rewrites the affected files in place.
 
 Guidance:
 - Goal: prepare this distributive so the next launch opens `Workspace Agent`
@@ -944,36 +979,61 @@ Guidance:
      them alongside `Default` in `Scripts/Workers/` following section 4.2
      and section 9.6. If the user has no additional wrappers in mind,
      skip this step.
-  2. **Template repositories.** Present the user with the **default
-     candidate list** of three directories under
-     `Workspaces/__template__/` that may become git repositories:
-     `Configuration/`, `Documentation/`, `Implementation/`. Do **not**
-     include `Prompts/` or `Work/` in this list (those are workflow
-     coordination directories that are part of the template itself and
-     never repositories), and do not list any other top-level template
-     files. First ask one shortcut question:
+  2. **Template repositories.** Ask the user, one repository at a time,
+     which git repositories should live inside
+     `Workspaces/__template__/` and become attached as worktrees in
+     every workspace created from this template. There is no default
+     candidate list and no shortcut "initialize three" prompt -- the
+     scaffolder ships an empty template. Repeat the per-repo
+     interaction below until the user says they are done; the user may
+     also say "none" at the first prompt, in which case workspaces
+     will have no attached repositories (still valid; the zero-repo
+     rollback header form from section 4.4 covers this).
 
-     > "Initialize all three (`Configuration/`, `Documentation/`,
-     > `Implementation/`) as local git repos with an empty initial commit?
-     > [Yes / No, let me choose / None]"
+     For each repository the user adds, collect:
+     - **Source.** One of:
+       (a) a clone URL (HTTPS or SSH) -- the agent will run
+           `git clone <url> <folder>` inside `Workspaces/__template__/`;
+       (b) "local-only" -- the agent will `git init` a fresh repo with
+           one empty initial commit (`git commit --allow-empty -m
+           <init message>`) on the default baseline branch.
+     - **Branch (optional).** Only meaningful for clone sources. If
+       provided, check out that branch after cloning
+       (`git -C <folder> checkout <branch>`). If omitted, accept the
+       remote's default branch.
+     - **Folder name (optional).** The directory name to use under
+       `Workspaces/__template__/`. If omitted, derive it from the
+       clone URL's last path segment with any trailing `.git` stripped
+       (e.g. `https://example.com/org/foo.git` -> `foo`). For
+       local-only repos the folder name is required. Reject folder
+       names that collide with workflow coordination directories
+       (`Prompts`, `Work`) or with any other name reserved by the
+       manifest, and reject names containing path separators.
 
-     - If the user picks **Yes**: run `git init` + `git commit
-       --allow-empty -m <init message>` in each of the three directories
-       on the default baseline branch. Do not ask per-directory upstream
-       questions in this fast path; the user can wire upstreams later.
-     - If the user picks **No, let me choose**: ask, one at a time, for
-       each of the three candidates whether to (a) make it a local-only
-       repo, (b) clone from an upstream URL, (c) leave it as a plain
-       directory, or (d) remove it entirely. Apply each choice.
-     - If the user picks **None**: leave all three as plain directories
-       and skip ahead.
+     Suggested one-question prompts (issued one at a time, per repo):
 
-     After the chosen directories are real repos, each must have a
-     resolvable `HEAD` (empty initial commit is acceptable) and correct
-     upstream tracking where the user supplied a URL. The user may also
-     add, rename, or remove placeholder directories beyond the default
-     three -- if they ask, accept those changes, but never volunteer
-     `Prompts/` or `Work/` as candidates.
+     > "Add a repository to the template? Reply with the clone URL,
+     > or 'local' to init a fresh local repo, or 'done' to finish."
+
+     Then, only when needed:
+
+     > "Branch to check out for `<folder>`? (Press Enter to use the
+     > remote default.)"
+
+     > "Folder name for this repo under `Workspaces/__template__/`?
+     > (Press Enter to use the inferred name `<inferred>`.)"
+
+     After each repository is created, verify:
+     - the directory exists at `Workspaces/__template__/<folder>/`,
+     - it is a real git repo (`<folder>/.git` exists),
+     - `git -C <folder> rev-parse --verify HEAD` succeeds (clones
+       always have a HEAD; local-only repos must have the empty
+       initial commit applied),
+     - for clones, the requested branch (or the remote default) is
+       checked out and the upstream is set as cloned.
+
+     Never volunteer `Prompts/` or `Work/` as candidates; they are
+     workflow coordination directories and never repositories.
   3. **Workspace naming and branch conventions.** Ask the user how workspace
      paths and branch names should be constructed. Rewrite
      `Workspaces/__template__/Workspace.md` so the "Workspace naming
@@ -992,47 +1052,106 @@ Guidance:
      `Workspaces/__template__/Prompts/Git Agent.md` so issue/ticket
      references resolve correctly. If none, leave the "not configured"
      section as-is and record that fact.
-  6. **Verify installation.** Before switching the launcher, run a
+  6. **Optional integrations / add-ons.** Ask the user, in free form,
+     whether they want any additional integrations or behavioral
+     add-ons wired into the workflow. This is the catch-all step for
+     anything that does not fit the previous categories: editor
+     integration (e.g. "open the workspace in a new VS Code window
+     when I ask"), terminal multiplexer hooks, notification systems,
+     custom MCP servers, shell aliases, environment variables required
+     by the harness, and so on.
+
+     Procedure:
+     - Present one prompt similar to: "Any integrations or add-ons to
+       wire in? Examples: open workspaces in VS Code on request,
+       desktop notifications, an MCP server, etc. Say 'none' to skip."
+     - If the user says 'none' (or equivalent), record that fact and
+       move on.
+     - Otherwise, for each requested integration, ask follow-up
+       questions one at a time to gather the minimum required
+       information (binary names, config paths, trigger conditions,
+       which agent prompt should know about it). Apply each integration
+       by editing the **existing** files that are responsible for that
+       behavior; do **not** invent new top-level files or new scripts
+       under `Scripts/` for an integration (the file manifest in
+       section 7 is the upper bound on what may exist at workflow
+       root). Acceptable edit targets are:
+       - any per-workspace prompt under
+         `Workspaces/__template__/Prompts/` (e.g. add a "VS Code"
+         section to `Worker Agent.md` describing when and how to open
+         the workspace),
+       - `Workspaces/__template__/Framework.md` (commands the agents
+         should run),
+       - `Workspaces/__template__/Notes.md` (free-form user
+         conventions),
+       - the top-level `Prompts/Workspace Agent.md` (workflow-wide
+         behavior, e.g. "when the user says 'open in VS Code', run
+         `code <workspace-path>`"),
+       - the existing worker wrappers under `Scripts/Workers/` only
+         when the integration is genuinely a harness-launch concern.
+
+     Example: "Integrate with VS Code: when I ask, open the current
+     workspace in a new VS Code window". Wire this by adding a short
+     section to `Prompts/Workspace Agent.md` (and/or the relevant
+     per-workspace prompt) that documents the trigger phrases and the
+     exact command (`code --new-window <absolute-workspace-path>` on
+     PATH, with an OS-appropriate fallback when `code` is not on
+     PATH). Do not create new launcher files or scripts for it.
+
+     If the user requests an integration that genuinely cannot be
+     expressed by editing existing files within the manifest, decline
+     and explain the constraint; capture the request as a follow-up
+     entry in `Workspaces/__template__/Backlog.md` instead.
+  7. **Verify installation.** Before switching the launcher, run a
      self-check and fix anything that fails. Do not ask the user to do
      this; do it and report results. Required checks:
-     - Each subdirectory of `Workspaces/__template__/` that the user
-       chose as a repository in step 2 is a real git repository
-       (`<repo>/.git` exists), is on the expected baseline branch, and
-       has a resolvable `HEAD` (`git -C <repo> rev-parse --verify HEAD`
-       succeeds). Repos with a configured upstream have the upstream
-       set as the user requested. Placeholder directories the user
-       chose to keep as non-repos are still present.
+     - Every repository directory the user added in step 2 exists at
+       `Workspaces/__template__/<folder>/`, is a real git repository
+       (`<folder>/.git` exists), is on the expected branch (the
+       requested branch for clones, the default baseline branch for
+       local-only repos), and has a resolvable `HEAD`
+       (`git -C <folder> rev-parse --verify HEAD` succeeds). Cloned
+       repos have their upstream set as configured by `git clone`.
+       `Workspaces/__template__/` contains no extra directories beyond
+       the ones the user added in step 2 and the workflow coordination
+       directories (`Prompts/`, `Work/`).
      - `Workspaces/__template__/Workspace.md` reflects the user's
        repository list and naming/branch conventions from steps 2-3
-       (no leftover default mentions of removed placeholders, no
-       references to repositories that were not actually created).
+       (the "Repository layout" section lists exactly the repos added
+       in step 2; no leftover default placeholder mentions).
      - `Workspaces/__template__/Framework.md` matches the decision
        from step 4 (filled-in map or brownfield stub plus a backlog
        follow-up entry; not both, not neither).
      - `Workspaces/__template__/Prompts/Git Agent.md` reflects the
        step-5 tracker decision (configured details, or an explicit
        "not configured" section).
+     - The integrations chosen in step 6 are reflected in the files
+       that step 6 says it may edit (e.g. a "VS Code" trigger section
+       exists in `Prompts/Workspace Agent.md` if VS Code integration
+       was requested). Integrations the user declined leave no traces
+       behind.
      - Dispatcher smoke test: invoke `Scripts/Agent.<ext>` with
        `--worker Default --prompt <abs Workspace Agent path> --mode cli
        --dry-run` and confirm it prints a harness command without
        error. Do **not** smoke-test against `Installation Agent.md`
        once the launcher has been switched.
-     - Top-level launcher (before the switch in step 7) still parses
+     - Top-level launcher (before the switch in step 8) still parses
        and targets the dispatcher with valid arguments per section 10.
      If any check fails, repair the offending artifact and re-run the
-     affected check. Only proceed to step 7 once all checks pass.
+     affected check. Only proceed to step 8 once all checks pass.
 
-  7. **Switch the top-level launcher.** Change the top-level `Open Agent`
+  8. **Switch the top-level launcher.** Change the top-level `Open Agent`
      launcher so its prompt argument points to
      `Prompts/Workspace Agent.md` instead of `Prompts/Installation Agent.md`
      (section 4.12). Do not change the launcher file name or any other
      property. After the switch, re-run the dispatcher smoke test from
-     step 6 against the new prompt target (`Workspace Agent.md`) to
+     step 7 against the new prompt target (`Workspace Agent.md`) to
      confirm the launcher still resolves to a valid harness command.
 
-  8. **Offer to open Workspace Agent in a new window.** After
-     reporting "installation complete", ask the user whether they want
-     to launch the `Workspace Agent` right now. If yes, **do not** load
+  9. **Offer to open Workspace Agent in a new window.** Immediately
+     before emitting the final completion message in step 10, ask the
+     user whether they want to launch the `Workspace Agent` right now.
+     If yes, **do not** load
      the `Workspace Agent` prompt into the current Installation Agent
      session (that would reuse this session's context and is not what
      the user wants). Instead, open the top-level `Open Agent`
@@ -1049,15 +1168,21 @@ Guidance:
      The Installation Agent session itself stays open in its original
      window so the user can review the install summary. Do not push
      anything to a remote, and do not auto-launch without asking.
-  9. End with: installation complete, next run starts workspace flow.
+  10. Emit the final completion message: installation complete, next run
+      starts workspace flow. This is the single "installation complete"
+      sentence; do not print it earlier.
 - Expected output artifacts: optional additional worker wrappers under
   `Scripts/Workers/` (the existing `Default` wrapper is left untouched);
-  real git repositories under `Workspaces/__template__/` with at least one
-  `HEAD` commit each; updated `Workspaces/__template__/Workspace.md`;
-  updated or stubbed `Workspaces/__template__/Framework.md` (with a
-  backlog note when stubbed); updated
-  `Workspaces/__template__/Prompts/Git Agent.md`; top-level launcher
-  switched to `Workspace Agent`.
+  zero or more git repositories under `Workspaces/__template__/`, each
+  with a resolvable `HEAD` commit, created from the user's answers in
+  step 2 (zero is valid -- the user may have said "none"); updated
+  `Workspaces/__template__/Workspace.md`; updated or stubbed
+  `Workspaces/__template__/Framework.md` (with a backlog note when
+  stubbed); updated `Workspaces/__template__/Prompts/Git Agent.md`;
+  top-level launcher switched to `Workspace Agent`; any
+  integration-related edits from step 6 applied to the existing files
+  named in that step (no new files or scripts outside the section 7
+  manifest).
 
 ### 8.3 `Prompts/Workspace Agent.md`
 
@@ -1119,9 +1244,10 @@ Guidance:
   repository in the workspace (default pattern
   `workspace/<area>/<ticket-or-scope>`).
 - Repository layout: one bullet per configured repository directory with a
-  one-line purpose. The default starter content lists `Implementation/`,
-  `Documentation/`, and `Configuration/`; installation rewrites this list to
-  match the repositories the user actually keeps.
+  one-line purpose. The scaffolder writes a placeholder paragraph saying
+  "No repositories configured yet; the Installation Agent will fill this
+  section in."; installation rewrites this list to match the
+  repositories the user actually added in section 8.2 step 2.
 - Verification notes: a one-line pointer that build/test/run/verify commands
   live in `Framework.md` and must be kept current.
 
@@ -1219,11 +1345,15 @@ question at a time, then write `Research`. Optionally update `Backlog`.
 
 ### 8.17 Template `Prompts/Planner Agent.md`
 
-Headings: "Inputs", "Outputs", "Existing plan policy", "Notes".
+Headings: "Inputs", "Outputs", "Existing plan policy", "Work queue
+seeding", "Notes".
 
 Guidance:
-- Inputs: `Issue`, `Research`, `Notes`, `Changelog`, `Framework`.
-- Outputs: `Plan` and `Status` (with the columns from section 4.9).
+- Inputs: `Issue`, `Research`, `Notes`, `Changelog`, `Framework`,
+  `Work/Next` (to see what is already queued).
+- Outputs: `Plan`, `Status` (with the columns from section 4.9), and
+  `Work/Next` (the initial set of actionable chunks derived from the
+  plan).
 - Existing plan policy:
   - If `Plan.md` already exists, do not rewrite or replace it unless the
     user explicitly asks for a rewrite.
@@ -1232,8 +1362,23 @@ Guidance:
   - If the user says not to change the plan, treat `Plan.md` as read-only
     and continue with discussion/review only.
   - Always confirm intent before replacing an existing plan wholesale.
+- Work queue seeding:
+  - After the `Plan` is in a stable state, derive actionable chunks
+    into `Work/Next` (chunks separated by the literal line `---` per
+    section 4.3). Each chunk should be a single, self-contained unit
+    of execution scoped tightly enough that a Worker can act on it
+    without further planning.
+  - If `Work/Next` already has actionable blocks, do not regenerate
+    them unless the user explicitly asks; offer to append additional
+    chunks instead.
+  - If `Work/Next` is empty, create initial actionable chunks
+    immediately once the plan is stable.
+  - Do not write to `Work/Current`, `Work/Blocked`, or `Work/Done`;
+    those files are owned by `Work - Do` / `Work - Undo` (Worker
+    Agent).
 - Notes: `Research` may say "No research" and planning still proceeds.
-  Defer out-of-scope items to `Backlog`.
+  Defer out-of-scope items to `Backlog`. Read only the minimum required
+  files first and do not run broad cross-workspace discovery.
 
 ### 8.18 Template `Prompts/Worker Agent.md`
 
@@ -1241,12 +1386,16 @@ Headings: "Inputs", "Responsibilities", "Rules".
 
 Guidance:
 - Inputs: `Plan`, `Issue`, `Notes`, `Changelog`, `Research`, `Status`,
-  `Framework`, `Assignments`.
-- Responsibilities: help derive blocks into `Work/Next` (separator `---`);
-  invoke `Work - Do`; resolve `Blocked`/`Current` decisions via explicit CLI
-  arguments; invoke `Work - Undo` when rollback is requested; refine work
-  toward 100% in `Status` or propose backlog items; when the user asks to
-  run all work, process tasks sequentially one by one.
+  `Framework`, `Assignments`, `Work/Next`.
+- Responsibilities: invoke `Work - Do`; resolve `Blocked`/`Current`
+  decisions via explicit CLI arguments; invoke `Work - Undo` when
+  rollback is requested; refine work toward 100% in `Status` or
+  propose backlog items; when the user asks to run all work, process
+  tasks sequentially one by one. The Worker does **not** seed
+  `Work/Next` -- that is the Planner Agent's responsibility
+  (section 8.17). If `Work/Next` is empty when the user asks the
+  Worker to start, instruct the user to run the Planner Agent first
+  (or, if they explicitly ask, hand off to planning before executing).
 - After each task is verified and moved to `Work/Done`, create a local git
   commit for each changed repository before starting the next task. Commit
   only after successful verification; do not batch commits across tasks; the
@@ -1257,13 +1406,10 @@ Guidance:
   inside workspace directories (never propose creating `Work - Do` or
   `Work - Undo` inside a workspace); if the session starts in a workspace
   folder, locate the root scripts by walking upward to the directory that
-  contains `Scripts/Work - Do.<ext>`; for the "define work" flow read only
-  the minimum required files first (`Plan`, `Status`, `Work/Next`, optionally
-  `Assignments`) and do not run broad cross-workspace discovery; if
-  `Work/Next` already has actionable blocks, do not regenerate them unless
-  the user explicitly asks; if it is empty, create initial actionable blocks
-  immediately; treat `Plan` as input, not output (do not edit `Plan` unless
-  the user explicitly asks).
+  contains `Scripts/Work - Do.<ext>`; treat `Plan` and `Work/Next` as
+  input, not output (do not edit `Plan` or seed/regenerate `Work/Next`
+  unless the user explicitly asks -- the canonical path for new chunks
+  is through the Planner Agent).
 
 ### 8.19 Template `Prompts/Reviewer Agent.md`
 
@@ -1441,9 +1587,11 @@ def main():
 
 Helpers:
 - `worktree_primary_repo(repo)`: if `<repo>/.git` is a file, parse its
-  `gitdir:` value. If that path resolves to
-  `<primary>/.git/worktrees/<name>`, return `<primary>`. Otherwise return
-  `None`.
+  `gitdir:` value. The value may be absolute or relative; resolve
+  relative paths against the directory containing the `.git` file (i.e.
+  `<repo>/`) before pattern-matching. If the resolved path matches
+  `<primary>/.git/worktrees/<name>`, return `<primary>`. Otherwise
+  return `None`.
 - `git_worktree_remove(primary, repo, force)`: run
   `git -C <primary> worktree remove <repo> [--force]`.
 - `git_worktree_prune(primary)`: run `git -C <primary> worktree prune`.
@@ -1478,9 +1626,11 @@ Rollback header helpers:
 
 Dispatcher invocation: spawn the interpreter on `Scripts/Agent.<ext>` with
 the canonical arguments. Build `--context-files` from the existing workspace
-artifacts listed in section 4.5. The verifier dispatcher call captures its
-stdout so the trailing `PASS` / `FAIL: <text>` line can be parsed; the
-executor call may stream output.
+artifacts listed in section 4.5. The verifier dispatcher call is always
+made with `--mode cli` (regardless of the mode the caller of `Work - Do`
+requested) and captures its stdout so the trailing `PASS` / `FAIL: <text>`
+line can be parsed; stderr may be streamed live. The executor call uses
+the caller's requested mode and may stream output live.
 
 Verification outcome handling:
 
@@ -1596,6 +1746,9 @@ inspection):
 - `Work - Undo`: `work-undo.start`, `work-undo.idle`,
   `work-undo.preflight`, `work-undo.rollback`, `work-undo.done`.
 - `Workspace - Create`: `workspace-create.init`,
+  `workspace-create.pull` (emitted before each `git pull --ff-only` on a
+  template repo whose current branch has a configured upstream; the
+  message names the repo and the branch being fast-forwarded),
   `workspace-create.worktree`, `workspace-create.done`.
 - `Workspace - Remove`: `workspace-archive.start`,
   `workspace-archive.blocked`, `workspace-archive.snapshot`,
@@ -1792,10 +1945,13 @@ and report results.
    The only exceptions are: this `INSTALL.md` (consumed input), and the
    files explicitly listed in section 7. The four template
    `Work/*.md` files and the empty `Workspaces/__archive__/` directory
-   are part of the manifest and must remain. Empty placeholder
-   directories from section 7 (`Configuration/`, `Documentation/`,
-   `Implementation/`) must also remain. After this pass, the workflow
-   root tree must match section 7 exactly, with nothing extra.
+   are part of the manifest and must remain. The `Workspaces/__template__/`
+   directory itself ships with no repository directories; any
+   `Configuration/`, `Documentation/`, `Implementation/`, or other
+   repo directories the rehearsal (section 13.5) or a previous aborted
+   run may have left behind must be removed in this pass. After this
+   pass, the workflow root tree must match section 7 exactly, with
+   nothing extra.
 
 1. Every file from section 7 exists and is non-empty (zero-byte files are a
    failure).
@@ -1806,11 +1962,14 @@ and report results.
    `--worker Default --prompt <abs Installation Agent path> --mode cli --dry-run`.
 4. Each per-agent launcher has the expected target, arguments, and working
    directory per section 10.
-5. `Work - Do` chunk parser round-trip: feed the parser a synthetic input of
-   two non-empty chunks separated by `---`, write it back via the writer,
-   and confirm the content is unchanged except for normalized trailing
-   whitespace. (The template `Work/*.md` files are empty by design and are
-   not used for this check.)
+5. `Work - Do` chunk parser round-trip: feed the parser a synthetic input
+   already in the writer's canonical form (two non-empty chunks joined by
+   `\n---\n\n`, ending with a single trailing newline), write it back via
+   the writer, and confirm the output is byte-equivalent to the input.
+   Non-canonical inputs are expected to be normalized by the writer
+   (separator spacing, trailing whitespace) and are not part of this
+   round-trip check. (The template `Work/*.md` files are empty by design
+   and are not used for this check.)
 6. `Workspace - Remove` refuses to run without `--synced`.
 7. `Work - Do` refuses to run when `Blocked` or `Current` is non-empty
    without the matching action flag.
@@ -1850,12 +2009,13 @@ Protocol:
    cannot be created, skip the rehearsal and report the reason; do
    not attempt the rehearsal without a working rollback.
 
-2. **Prepare repos.** In `Workspaces/__template__/`, initialize the
-   three default placeholder directories (`Configuration/`,
-   `Documentation/`, `Implementation/`) as real git repos with one
-   empty initial commit each (`git init`, `git commit --allow-empty -m
-   rehearsal`). These mirror what the `Installation Agent` does on a
-   real install. No upstream is configured; everything stays local.
+2. **Prepare repos.** In `Workspaces/__template__/`, create three
+   throwaway local-only git repos named `RehearsalA/`, `RehearsalB/`,
+   `RehearsalC/` with one empty initial commit each (`git init`,
+   `git commit --allow-empty -m rehearsal`). These exist only for the
+   rehearsal and must be deleted by step 9's restore; they do **not**
+   mirror anything the scaffolder ships (the scaffolder ships an empty
+   template). No upstream is configured; everything stays local.
 
 3. **Switch the launcher (simulated).** Update the top-level `Open
    Agent` launcher so its prompt argument points to
@@ -1866,19 +2026,19 @@ Protocol:
    `Scripts/Workspace - Create --workspace rehearsal/smoke --branch
    workspace/rehearsal/smoke`. Assert:
    - the workspace directory exists under `Workspaces/rehearsal/smoke/`,
-   - the three repos are attached as worktrees on the requested branch,
+   - the three rehearsal repos are attached as worktrees on the requested branch,
    - the five per-agent launchers exist and parse,
    - the per-workspace artifacts (`Issue.md`, `Plan.md`, ..., `Work/`)
      were copied from the template.
 
 5. **Queue a synthetic task and run `Work - Do`.** Write a single
    chunk into `Workspaces/rehearsal/smoke/Work/Next.md` (something
-   trivial, e.g. "touch a file in Implementation/"). Invoke
+   trivial, e.g. "touch a file in RehearsalA/"). Invoke
    `Scripts/Work - Do --workspace Workspaces/rehearsal/smoke --mode cli
    --dry-run`. Assert:
    - the chunk moved out of `Next.md`,
    - `Current.md` contains the chunk with a valid rollback header
-     (section 4.4) carrying real commit hashes from the three repos,
+     (section 4.4) carrying real commit hashes from the three rehearsal repos,
    - the dispatcher was invoked with the execute prompt and the verify
      prompt (both as dry runs),
    - because `--dry-run` was set, the chunk stayed in `Current.md` per
@@ -1910,7 +2070,8 @@ Protocol:
 9. **Restore.** Delete every child of the workflow root **except**
    `INSTALL.md` (the user-supplied input), then copy the snapshot from
    step 1 back into place verbatim. Verify by spot-checking that:
-   - the three placeholder directories are empty again (not git repos),
+   - the rehearsal repo directories (`RehearsalA/`, `RehearsalB/`,
+     `RehearsalC/`) are gone from `Workspaces/__template__/`,
    - `__archive__/` is empty,
    - the top-level launcher targets `Prompts/Installation Agent.md`
      again,
