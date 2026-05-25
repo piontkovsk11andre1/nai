@@ -161,6 +161,8 @@ You have three equally valid entry points, pick whichever fits:
   to the taskbar, drop them in the Dock, put them on the desktop. One
   top-level launcher for orchestration, five per-workspace launchers
   (Git / Research / Planner / Worker / Reviewer) for each role.
+  
+  ![Screenshot from Windows](image.png)
 - **From your editor.** Ask an AI agent to integrate Nai with your
   editor (VS Code, JetBrains, Zed, whatever) — it knows the layout and
   will pick a sensible way to surface every knob (tasks, run configs,
