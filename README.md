@@ -68,7 +68,9 @@ Five roles, each a separate AI session with its own prompt and a small
 set of input/output files. You move between them at your own pace;
 nothing is automatic across role boundaries.
 
-The flow is deliberately minimal. Every piece earns its keep:
+The flow is deliberately minimal. As models keep getting smarter, the
+scaffolding around them can shrink — Nai keeps only the few guardrails
+that still matter:
 
 - **Just enough checkpoints.** Each role is a context reset that keeps
   the agent focused on the step in front of it instead of drifting
