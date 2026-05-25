@@ -149,6 +149,11 @@ You have several equally valid entry points, pick whichever fits:
   restart just that one and pick up where you left off; the per-role
   sessions it spawned keep their own state.
 
+That clickable role-by-role entry is intentional: it disciplines you to
+use the stages as control and confirmation points, so **your** own mistakes
+get caught early. If you let AI blur the steps together without your
+review and correction, the work can drift away from the target.
+
 ---
 
 ## ✨ Why bother
