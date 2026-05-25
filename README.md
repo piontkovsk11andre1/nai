@@ -119,15 +119,16 @@ looks like this:
 
 ## ▶️ How you run it
 
-You have three equally valid entry points, pick whichever fits:
+You have several equally valid entry points, pick whichever fits:
 
-- **Double-click a launcher.** A tactile, OS-native entry point: the
-  launchers are real shortcuts (`.lnk` on Windows, `.command` on macOS,
-  `.desktop` on Linux), so they sit in Explorer / Finder / your file
-  manager and integrate with the OS UI like any other app — pin them
-  to the taskbar, drop them in the Dock, put them on the desktop. One
-  top-level launcher for orchestration, five per-workspace launchers
-  (Git / Research / Planner / Worker / Reviewer) for each role.
+- **Double-click a launcher.** A tactile, OS-native entry point into any
+  individual role: each workspace ships five launchers (Git / Research
+  / Planner / Worker / Reviewer) as real shortcuts (`.lnk` on Windows,
+  `.command` on macOS, `.desktop` on Linux), so they sit in Explorer /
+  Finder / your file manager and integrate with the OS UI like any
+  other app — pin them to the taskbar, drop them in the Dock, put them
+  on the desktop. Double-clicking opens that role's session directly,
+  no orchestrator in between.
 - **From your editor.** Ask an AI agent to integrate Nai with your
   editor (VS Code, JetBrains, Zed, whatever) — it knows the layout and
   will pick a sensible way to surface every knob (tasks, run configs,
@@ -141,6 +142,12 @@ You have three equally valid entry points, pick whichever fits:
   with a message naming the exact flag. The whole surface drops
   cleanly into Make targets, CI jobs, git hooks, or any other
   automation.
+- **From the top-level Workspace Agent.** Stay in one session and let
+  it open the others for you — it can spawn a Research / Planner /
+  Worker / Reviewer session for any workspace, hand the task over, and
+  come back to its own prompt. If the orchestrating session drifts,
+  restart just that one and pick up where you left off; the per-role
+  sessions it spawned keep their own state.
 
 ---
 
