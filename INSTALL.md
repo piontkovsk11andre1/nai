@@ -448,7 +448,15 @@ Invoked with:
 
 Behavior:
 
-1. Refuse if the target directory already exists.
+1. Refuse if the target directory already exists. This existence check
+   must be the **very first** action on the destination path, before any
+   other side effect that could create or touch it. In particular, the
+   workspace logging helper from section 9.7 creates the workspace
+   directory on first write, so emitting any log line for this workspace
+   before the existence check would make the check always pass and
+   silently clobber a pre-existing workspace. Order the script as:
+   `dest.exists()` check first, then create the destination directory,
+   then log.
 2. Copy every non-git, non-launcher file and directory from
    `Workspaces/__template__` into the new workspace path. Skip launcher files
    (they are regenerated in step 5).
@@ -1569,6 +1577,14 @@ function:
   `[YYYY-MM-DD HH:MM:SS] <event>: <message>\n` to `<workspace>/log.txt`
   (UTF-8). Any I/O failure is swallowed silently; logging must never break a
   workflow script.
+
+  Important side effect: this helper creates the workspace directory (and
+  any missing parents) on first write so logging works for freshly-created
+  workspaces. Callers that branch on whether the workspace directory
+  already exists (notably `Workspace - Create`, section 4.7 step 1) must
+  perform that existence check **before** emitting any log line for the
+  workspace; otherwise the directory created by the logger will mask a
+  pre-existing workspace and the guard will never trip.
 
 Canonical event names per script (best-effort breadcrumbs; the file is
 plain text and is not parsed by any script, it exists for human
