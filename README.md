@@ -1,4 +1,4 @@
-# Nai — Naive Agentic Infrastructure
+# 🌿 Nai — Naive Agentic Infrastructure
 
 A 2026-style delivery workflow for AI coding agents, tightly integrated
 with git. It is not a framework you import and not a CLI you install —
@@ -10,7 +10,7 @@ monorepo, or several unrelated repos pulled into one workspace.
 
 ---
 
-## Install
+## 🚀 Install
 
 In an empty directory, open any AI coding agent (Claude Code, opencode,
 Codex, Copilot Chat, …) and send one message:
@@ -37,7 +37,44 @@ ends up in every file.
 
 ---
 
-## What you actually get
+## 🔄 How the workflow looks
+
+```mermaid
+flowchart LR
+    G[Git Agent] --> R[Research Agent]
+    R --> P[Planner Agent]
+    P --> W[Worker Agent]
+    W --> V[Reviewer Agent]
+    V --> G
+
+    subgraph Queue [Work queue]
+        direction LR
+        N[Next]
+        subgraph Current [Current]
+            direction LR
+            E[Execute] --> Vf{Verify}
+        end
+        D[Done]
+        B[Blocked]
+        N --> E
+        Vf -- PASS --> D
+        Vf -- "FAIL: reason" --> B
+    end
+
+    W -. drives .-> Queue
+```
+
+Five roles, each a separate AI session with its own prompt and its own
+small set of input/output files. You move between them at your own pace;
+nothing is automatic across role boundaries.
+
+Execute and Verify are two separate prompts and can use two different
+models or workers (e.g. a fast model to do the change, a stricter one to
+check it).
+
+---
+
+## 📦 What you actually get
 
 A directory like this, generated on first install:
 
@@ -100,44 +137,9 @@ Workspaces/PROJ-123-add-login/
   repo-b/                        git worktree on the workspace branch
 ```
 
-## How the workflow looks
-
-```mermaid
-flowchart LR
-    G[Git Agent] --> R[Research Agent]
-    R --> P[Planner Agent]
-    P --> W[Worker Agent]
-    W --> V[Reviewer Agent]
-    V --> G
-
-    subgraph Queue [Work queue]
-        direction LR
-        N[Next]
-        subgraph Current [Current]
-            direction LR
-            E[Execute] --> Vf{Verify}
-        end
-        D[Done]
-        B[Blocked]
-        N --> E
-        Vf -- PASS --> D
-        Vf -- "FAIL: reason" --> B
-    end
-
-    W -. drives .-> Queue
-```
-
-Five roles, each a separate AI session with its own prompt and its own
-small set of input/output files. You move between them at your own pace;
-nothing is automatic across role boundaries.
-
-Execute and Verify are two separate prompts and can use two different
-models or workers (e.g. a fast model to do the change, a stricter one to
-check it).
-
 ---
 
-## How you run it
+## ▶️ How you run it
 
 You have three equally valid entry points, pick whichever fits:
 
@@ -164,7 +166,7 @@ You have three equally valid entry points, pick whichever fits:
 
 ---
 
-## Why bother
+## ✨ Why bother
 
 A few things that make this different from "just prompting an agent":
 
@@ -192,7 +194,7 @@ A few things that make this different from "just prompting an agent":
 
 ---
 
-## What you can change
+## 🔧 What you can change
 
 - **Prompts.** Every agent's behavior lives in a markdown file under
   `Workspaces/__template__/Prompts/`. Edit them in the template to
@@ -216,7 +218,7 @@ A few things that make this different from "just prompting an agent":
 
 ---
 
-## Try it on an existing repo
+## 🧪 Try it on an existing repo
 
 Pick a project you are already working on and try a single round-trip:
 
@@ -232,7 +234,7 @@ Pick a project you are already working on and try a single round-trip:
 
 ---
 
-## More
+## 📚 More
 
 The full specification (per-file contracts, per-script behavior,
 launcher recipes, harness guide, verification checklist) lives in
