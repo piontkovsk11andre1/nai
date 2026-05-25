@@ -90,7 +90,7 @@ that still matter:
 A directory like this, generated on first install:
 
 ```
-Open Agent.(lnk|command|desktop)   top-level launcher
+Open Agent.(cmd|command|desktop)   top-level launcher
 Prompts/
   Installation Agent.md
   Workspace Agent.md
@@ -123,7 +123,7 @@ You have several equally valid entry points, pick whichever fits:
 
 - **Double-click a launcher.** A tactile, OS-native entry point into any
   individual role: each workspace ships five launchers (Git / Research
-  / Planner / Worker / Reviewer) as real shortcuts (`.lnk` on Windows,
+  / Planner / Worker / Reviewer) as launcher files (`.cmd` on Windows,
   `.command` on macOS, `.desktop` on Linux), so they sit in Explorer /
   Finder / your file manager and integrate with the OS UI like any
   other app — pin them to the taskbar, drop them in the Dock, put them
