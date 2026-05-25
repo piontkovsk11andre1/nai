@@ -96,10 +96,10 @@ issue tracker, optional integrations / add-ons) is deferred to the
 `Installation Agent`, which the user will run later on their own machine
 through the top-level launcher. Do not ask those deferred questions here.
 
-The one exception is the AI harness: the `Default` worker wrapper must be
-fully functional from the very first launch (the top-level launcher
-immediately spawns the `Installation Agent` through that wrapper), so the
-harness is configured here, not deferred.
+The one exception is the AI tool used by the `Default` worker: it must be
+ready from the very first launch because the top-level launcher immediately
+opens the `Installation Agent` through it. Configure that here instead of
+deferring it.
 
 1. **Language.** Which natural language should I use for our conversation and
    for all generated files? Default: English. If the user picks another
@@ -117,55 +117,50 @@ harness is configured here, not deferred.
 4. **Workflow root path.** Absolute path where the workflow should be
    installed. Default: the current working directory.
 
-5. **AI harness for the `Default` worker.** Which command-line AI harness
-   should `Scripts/Workers/Default.<ext>` invoke? Default: `opencode`
-   (canonical recipe in section 11.1). For any non-default answer,
-   collect enough information to write a working wrapper per section 4.2
-   and section 9.6:
+5. **AI tool for the `Default` worker.** Which command-line AI tool should
+   `Scripts/Workers/Default.<ext>` use? Default: `opencode`
+   (canonical recipe in section 11.1). The goal here is simple: make sure
+   the generated launcher can open the `Installation Agent` successfully on
+   first use. For any non-default answer, collect enough information to wire
+   it up correctly per section 4.2 and section 9.6:
    - the binary name and an OS-specific fallback path if applicable
      (e.g. `%APPDATA%\npm\<name>.cmd` on Windows for npm-installed
      shims),
-   - the unattended (CLI) invocation pattern that takes a single
-     bootstrap string,
-   - the interactive (TUI) invocation pattern that takes a single
-     bootstrap string,
-   - whether the harness supports attaching context files, and if so,
+   - the command-line mode that accepts a single startup instruction,
+   - the interactive mode that accepts a single startup instruction,
+   - whether the tool supports attaching context files, and if so,
      the exact flag.
 
-   Prefer to figure these out yourself before asking: if the harness
-   binary is available on PATH, run `<binary> --help` (and `<binary>
-   <subcommand> --help` for likely subcommands) and propose the
-   invocation patterns and attach flag based on its output. Confirm the
-   proposal with the user in a single message; only ask follow-up
-   questions for fields you could not determine. If the binary is not
-   available, ask the user directly. Either way, encode the final
-   answers into `Scripts/Workers/Default.<ext>` as part of scaffolding;
-   do not leave harness selection for the `Installation Agent`.
+   Prefer to figure this out yourself before asking: if the binary is
+   available on PATH, run `<binary> --help` (and `<binary> <subcommand>
+   --help` for likely subcommands), propose the command patterns and
+   attach flag based on that output, and confirm the proposal with the
+   user in one message. Only ask follow-up questions for the details you
+   could not determine. If the binary is not available, ask the user
+   directly. Either way, write the final answer into
+   `Scripts/Workers/Default.<ext>` during scaffolding; do not leave this
+   choice for the `Installation Agent`.
 
-   After the wrapper is wired, remind the user that most harnesses
-   (`opencode`, `claude`, etc.) read a local per-directory configuration
-   file (for example `opencode.json` / `.opencode/`, `.claude/` with
-   `settings.json` and permission rules, etc.) to control directory
-   access, allowed shell commands, network access, and other
-   capabilities. The scaffolder must **not** create or guess these
-   config files. Instead, in the final summary, point the user at the
-   workflow root and tell them they may want to drop a harness-specific
-   configuration there before first launch so the `Installation Agent`
-   (and every subsequent agent) has the permissions it needs. Name the
-   exact file(s) the chosen harness uses when you know them; otherwise
-   say "consult the harness documentation".
+   After the wrapper is ready, remind the user that many AI tools
+   (`opencode`, `claude`, etc.) also read a per-directory settings file
+   that controls permissions and access. Do **not** create or guess those
+   files. Instead, in the final summary, point the user at the workflow
+   root and say they may want to place the tool's own configuration there
+   before first launch so the `Installation Agent` can work with the right
+   permissions. Name the exact file(s) when you know them; otherwise say
+   "consult the harness documentation".
 
 6. **End-to-end rehearsal (optional).** After scaffolding finishes and the
-   standard verification checklist (section 13) passes, would you like
-   me to run a full end-to-end rehearsal of the user story (install ->
-   create workspace -> queue a task -> work-do -> work-undo -> archive)
-   and then restore the workflow root to its post-scaffold state?
-   Default: no. The rehearsal exercises every script and launcher
-   wiring against a throwaway workspace and throwaway repos. It does
-   **not** call the AI harness for real -- every harness invocation
-   uses `--mode cli --dry-run`, so no tokens are spent and no model
-   round-trips happen. If yes, follow the protocol in section 13.5 at
-   the end of the verification checklist.
+   standard verification checklist (section 13) passes, would you like me
+   to run a full practice pass of the workflow (install -> create
+   workspace -> queue a task -> work-do -> work-undo -> archive) and then
+   restore the workflow root to its post-scaffold state? Default: no. This
+   practice pass checks that the scripts and launchers are connected
+   correctly using a throwaway workspace and throwaway repos. It does
+   **not** call the AI tool for real -- every harness invocation uses
+   `--mode cli --dry-run`, so no tokens are spent and no model round-trips
+   happen. If yes, follow the protocol in section 13.5 at the end of the
+   verification checklist.
 
 After question 6, summarize the chosen configuration in one short message,
 then proceed to scaffolding (sections 6-12).
@@ -928,6 +923,11 @@ For every prompt or template document below, write the content in the chosen
 language. Each spec lists the required headings and short guidance lines.
 Keep the prose concise.
 
+For user-facing prompts and explanations, lead with purpose and next step:
+what is being done, what happens next, and how the user should use the
+result. Avoid low-level implementation terms unless they are necessary for
+correct execution or are protocol-critical.
+
 The heading names quoted below (for example "Goal", "Rules", "Inputs",
 "Required behavior") are reference identifiers in this specification. In
 the files you actually produce, translate them into the chosen language
@@ -955,15 +955,15 @@ in any order:
 Headings: "Goal", "Rules", "Installation checklist", "Expected output
 artifacts".
 
-This agent is the **single owner** of every decision the scaffolder
-deliberately deferred (section 3): template git repositories, naming/branch
-conventions, framework mapping, external issue tracker, and optional
-integrations / add-ons. The AI harness for the `Default` worker is
-**not** in this list -- it was configured by the scaffolder during
-interview question 5 and the `Installation Agent` itself is running
-through that wrapper. The scaffolder writes only generic defaults for
-the deferred items; this agent collects the real answers on the user's
-machine and rewrites the affected files in place.
+This agent is the **single owner** of every setup decision the scaffolder
+deliberately left for later (section 3): template git repositories,
+naming/branch conventions, framework mapping, external issue tracker, and
+optional integrations / add-ons. The AI tool used by the `Default` worker
+is **not** part of this follow-up work -- it was already configured by the
+scaffolder during interview question 5, and this very agent is running
+through it now. The scaffolder leaves only generic defaults behind; this
+agent collects the user's real setup choices on their own machine and
+updates the affected files to match.
 
 Guidance:
 - Goal: prepare this distributive so the next launch opens `Workspace Agent`
@@ -971,24 +971,25 @@ Guidance:
 - Rules: keep the prompt platform-agnostic; one question at a time; do not
   reconfigure `Scripts/Workers/Default` (it is already wired by the
   scaffolder and is the very wrapper running this agent); produce
-  concrete file updates and commands; no remote push.
+  concrete file updates and commands; explain what you are setting up, what
+  happens next, and how the user will use the result; avoid low-level
+  implementation detail unless it affects a real user decision; no remote
+  push.
 - Installation checklist (in order):
   1. **Additional worker wrappers (optional).** `Scripts/Workers/Default`
-     was configured by the scaffolder and must not be changed here. If
-     the user wants extra worker wrappers for other harnesses, create
-     them alongside `Default` in `Scripts/Workers/` following section 4.2
-     and section 9.6. If the user has no additional wrappers in mind,
-     skip this step.
+     was configured by the scaffolder and must not be changed here. If the
+     user wants extra worker wrappers for other AI tools, create them
+     alongside `Default` in `Scripts/Workers/` following section 4.2 and
+     section 9.6. If not, skip this step.
   2. **Template repositories.** Ask the user, one repository at a time,
-     which git repositories should live inside
-     `Workspaces/__template__/` and become attached as worktrees in
-     every workspace created from this template. There is no default
-     candidate list and no shortcut "initialize three" prompt -- the
-     scaffolder ships an empty template. Repeat the per-repo
-     interaction below until the user says they are done; the user may
-     also say "none" at the first prompt, in which case workspaces
-     will have no attached repositories (still valid; the zero-repo
-     rollback header form from section 4.4 covers this).
+     which repositories should be part of the template in
+     `Workspaces/__template__/` so new workspaces start with the right
+     project folders ready. There is no default candidate list and no
+     shortcut setup here -- the scaffolder ships an empty template.
+     Repeat the per-repo interaction below until the user says they are
+     done; the user may also say "none" at the first prompt, in which
+     case workspaces will have no attached repositories (still valid; the
+     zero-repo rollback header form from section 4.4 covers this).
 
      For each repository the user adds, collect:
      - **Source.** One of:
@@ -1006,14 +1007,14 @@ Guidance:
        clone URL's last path segment with any trailing `.git` stripped
        (e.g. `https://example.com/org/foo.git` -> `foo`). For
        local-only repos the folder name is required. Reject folder
-       names that collide with workflow coordination directories
+       names that collide with built-in workflow directories
        (`Prompts`, `Work`) or with any other name reserved by the
        manifest, and reject names containing path separators.
 
      Suggested one-question prompts (issued one at a time, per repo):
 
      > "Add a repository to the template? Reply with the clone URL,
-     > or 'local' to init a fresh local repo, or 'done' to finish."
+     > or 'local' to start a fresh local repo, or 'done' to finish."
 
      Then, only when needed:
 
@@ -1033,33 +1034,30 @@ Guidance:
        checked out and the upstream is set as cloned.
 
      Never volunteer `Prompts/` or `Work/` as candidates; they are
-     workflow coordination directories and never repositories.
+     built-in workflow directories and never repositories.
   3. **Workspace naming and branch conventions.** Ask the user how workspace
      paths and branch names should be constructed. Rewrite
      `Workspaces/__template__/Workspace.md` so the "Workspace naming
      convention", "Branch convention", and "Repository layout" sections
      reflect the user's answers and the actual repositories from step 2.
-  4. **Optional framework mapping.** Ask whether to generate or refresh
-     `Workspaces/__template__/Framework.md` from the repositories configured
-     in step 2. If yes, produce the high-level navigation map and the
-     build/test/run/verify guidance. If no, leave the brownfield stub in
-     place and add a follow-up entry to
+  4. **Optional framework mapping.** Ask whether the user wants
+     `Workspaces/__template__/Framework.md` filled in now from the
+     repositories configured in step 2. If yes, produce a high-level
+     navigation map and the build/test/run/verify guidance. If no, leave
+     the brownfield stub in place and add a follow-up entry to
      `Workspaces/__template__/Backlog.md`.
-  5. **External issue tracker.** Ask where tasks/progress are tracked
-     outside workspaces (e.g. Gitea, GitHub, GitLab, Jira, Linear, or none).
-     Capture base URLs, org/project/repo identifiers, ID formats, and
-     whether MCP access is required and available. Update
-     `Workspaces/__template__/Prompts/Git Agent.md` so issue/ticket
-     references resolve correctly. If none, leave the "not configured"
-     section as-is and record that fact.
+  5. **External issue tracker.** Ask where tasks and progress are tracked
+     outside workspaces (for example Gitea, GitHub, GitLab, Jira, Linear,
+     or none). Collect the details needed so issue and ticket references
+     make sense inside the workflow, then update
+     `Workspaces/__template__/Prompts/Git Agent.md` accordingly. If none,
+     leave the "not configured" section as-is and record that fact.
   6. **Optional integrations / add-ons.** Ask the user, in free form,
-     whether they want any additional integrations or behavioral
-     add-ons wired into the workflow. This is the catch-all step for
-     anything that does not fit the previous categories: editor
-     integration (e.g. "open the workspace in a new VS Code window
-     when I ask"), terminal multiplexer hooks, notification systems,
-     custom MCP servers, shell aliases, environment variables required
-     by the harness, and so on.
+     whether they want any extra workflow behavior wired in. This is the
+     catch-all step for anything that does not fit the previous categories:
+     editor integration (for example "open the workspace in a new VS Code
+     window when I ask"), notifications, custom MCP servers, shell
+     aliases, environment variables required by the harness, and so on.
 
      Procedure:
      - Present one prompt similar to: "Any integrations or add-ons to
@@ -1090,13 +1088,13 @@ Guidance:
        - the existing worker wrappers under `Scripts/Workers/` only
          when the integration is genuinely a harness-launch concern.
 
-     Example: "Integrate with VS Code: when I ask, open the current
-     workspace in a new VS Code window". Wire this by adding a short
-     section to `Prompts/Workspace Agent.md` (and/or the relevant
-     per-workspace prompt) that documents the trigger phrases and the
-     exact command (`code --new-window <absolute-workspace-path>` on
-     PATH, with an OS-appropriate fallback when `code` is not on
-     PATH). Do not create new launcher files or scripts for it.
+      Example: "Integrate with VS Code: when I ask, open the current
+      workspace in a new VS Code window". Wire this by adding a short
+      section to `Prompts/Workspace Agent.md` (and/or the relevant
+      per-workspace prompt) that explains when to do it and which command
+      to run (`code --new-window <absolute-workspace-path>` on PATH, with
+      an OS-appropriate fallback when `code` is not on PATH). Do not
+      create new launcher files or scripts for it.
 
      If the user requests an integration that genuinely cannot be
      expressed by editing existing files within the manifest, decline
@@ -1104,16 +1102,18 @@ Guidance:
      entry in `Workspaces/__template__/Backlog.md` instead.
   7. **Verify installation.** Before switching the launcher, run a
      self-check and fix anything that fails. Do not ask the user to do
-     this; do it and report results. Required checks:
+     this; do it and report results. Tell the user what was checked and
+     whether it passed, without turning the summary into a low-level dump.
+     Required checks:
      - Every repository directory the user added in step 2 exists at
        `Workspaces/__template__/<folder>/`, is a real git repository
        (`<folder>/.git` exists), is on the expected branch (the
        requested branch for clones, the default baseline branch for
        local-only repos), and has a resolvable `HEAD`
        (`git -C <folder> rev-parse --verify HEAD` succeeds). Cloned
-       repos have their upstream set as configured by `git clone`.
+       repos have their upstream set as configured by `git clone`, and
        `Workspaces/__template__/` contains no extra directories beyond
-       the ones the user added in step 2 and the workflow coordination
+       the ones the user added in step 2 and the built-in workflow
        directories (`Prompts/`, `Work/`).
      - `Workspaces/__template__/Workspace.md` reflects the user's
        repository list and naming/branch conventions from steps 2-3
@@ -1141,12 +1141,12 @@ Guidance:
      affected check. Only proceed to step 8 once all checks pass.
 
   8. **Switch the top-level launcher.** Change the top-level `Open Agent`
-     launcher so its prompt argument points to
-     `Prompts/Workspace Agent.md` instead of `Prompts/Installation Agent.md`
-     (section 4.12). Do not change the launcher file name or any other
-     property. After the switch, re-run the dispatcher smoke test from
-     step 7 against the new prompt target (`Workspace Agent.md`) to
-     confirm the launcher still resolves to a valid harness command.
+     launcher so the next launch starts `Workspace Agent` instead of
+     `Installation Agent` (section 4.12). Do not change the launcher file
+     name or any other property. After the switch, re-run the dispatcher
+     smoke test from step 7 against the new prompt target
+     (`Workspace Agent.md`) to confirm the launcher still resolves to a
+     valid harness command.
 
   9. **Offer to open Workspace Agent in a new window.** Immediately
      before emitting the final completion message in step 10, ask the
@@ -1166,8 +1166,9 @@ Guidance:
        directly in a detached terminal (`setsid <launcher> &`) if
        neither is available.
      The Installation Agent session itself stays open in its original
-     window so the user can review the install summary. Do not push
-     anything to a remote, and do not auto-launch without asking.
+     window so the user can review the install summary and see what
+     changed. Do not push anything to a remote, and do not auto-launch
+     without asking.
   10. Emit the final completion message: installation complete, next run
       starts workspace flow. This is the single "installation complete"
       sentence; do not print it earlier.
@@ -1194,7 +1195,8 @@ Guidance:
   - archive a workspace via `Workspace - Remove --synced`,
   - open per-workspace agents by resolving the user's agent name to the
     exact per-workspace launcher file via this fixed mapping (no fuzzy
-    lookup):
+    lookup). Explain which launcher you are opening and for which
+    workspace:
     - Git -> `1. Open Git Agent` launcher
     - Research -> `2. Open Research Agent` launcher
     - Planner -> `3. Open Planner Agent` launcher
@@ -1210,14 +1212,15 @@ Guidance:
   - resolve "open <agent>" requests against the currently discussed
     workspace unless the user names a different one,
   - do not run broad file searches for scripts or launchers; use
-    deterministic workflow-root-relative paths (`Scripts/...`,
+    fixed workflow-root-relative paths (`Scripts/...`,
     `Workspaces/<workspace>/...`),
   - if the session starts inside a workspace folder, resolve the workflow
     root by walking upward to the directory that contains both `Scripts/`
     and `Workspaces/`, then use workflow-root-relative paths from there.
-- Notes: per-workspace work happens inside workspace prompts and markdown
-  files; the global backlog/changelog files live in `Workspaces/Backlog.md`
-  and `Workspaces/Changelog.md`.
+- Notes: keep explanations user-facing: say what you are doing, what happens
+  next, and how the user can continue. Per-workspace work happens inside
+  workspace prompts and markdown files; the global backlog/changelog files
+  live in `Workspaces/Backlog.md` and `Workspaces/Changelog.md`.
 
 ### 8.4 `Workspaces/Backlog.md` and `Workspaces/Changelog.md`
 
@@ -1330,10 +1333,11 @@ Headings: "Inputs", "Typical tasks", "Rules".
 Guidance:
 - Inputs: workspace `Issue`, `PR`, `Backlog`, `Changelog`, `Workspace`
   documents.
-- Typical tasks: read issue from tracker to populate `Issue`; update issue
-  comments and status; prepare PR using `PR.md`; perform explicit git
-  operations on request; sync workspace `Backlog` and `Changelog` into the
-  global ones in `Workspaces/`.
+- Typical tasks: bring task details into `Issue`; update issue comments and
+  status; prepare PR using `PR.md`; perform explicit git operations on
+  request; sync workspace `Backlog` and `Changelog` into the global ones in
+  `Workspaces/`. Explain git actions in plain language first, then run the
+  explicit command if the user wants it.
 - Rules: one question at a time, no push without explicit user request.
 
 ### 8.16 Template `Prompts/Research Agent.md`
@@ -1341,7 +1345,9 @@ Guidance:
 Headings: "Required behavior", "Optional tasks".
 
 Guidance: mirror section 4.10. Ask for pre-context first, then ask one
-question at a time, then write `Research`. Optionally update `Backlog`.
+question at a time, then write `Research`. Keep the conversation focused on
+what is being investigated, what is known so far, and what will be looked at
+next. Optionally update `Backlog`.
 
 ### 8.17 Template `Prompts/Planner Agent.md`
 
@@ -1377,8 +1383,10 @@ Guidance:
     those files are owned by `Work - Do` / `Work - Undo` (Worker
     Agent).
 - Notes: `Research` may say "No research" and planning still proceeds.
-  Defer out-of-scope items to `Backlog`. Read only the minimum required
-  files first and do not run broad cross-workspace discovery.
+  Keep the plan understandable at a glance: what will be done, in what
+  order, and how success will be checked. Defer out-of-scope items to
+  `Backlog`. Read only the minimum required files first and do not run broad
+  cross-workspace discovery.
 
 ### 8.18 Template `Prompts/Worker Agent.md`
 
@@ -1409,7 +1417,8 @@ Guidance:
   contains `Scripts/Work - Do.<ext>`; treat `Plan` and `Work/Next` as
   input, not output (do not edit `Plan` or seed/regenerate `Work/Next`
   unless the user explicitly asks -- the canonical path for new chunks
-  is through the Planner Agent).
+  is through the Planner Agent). Keep status updates practical: what was
+  done, what remains, and what decision is needed next.
 
 ### 8.19 Template `Prompts/Reviewer Agent.md`
 
@@ -1419,7 +1428,9 @@ Guidance:
 - Inputs: `Plan`, `Issue`, `Status`, `Work/Done`, repository changes.
 - Outputs: `Changelog`, `PR`, optional updates to `Status`, `Notes`,
   `Backlog`.
-- Rules: explain gaps; keep status updates concrete and measurable.
+- Rules: explain gaps in plain language; keep status updates concrete and
+  measurable; tell the user what is ready, what is still missing, and what
+  follow-up is recommended.
 
 ### 8.20 Template `Prompts/Work - Execute.md`
 
@@ -1434,8 +1445,8 @@ Guidance:
     read-only context during execution: `Status`, `Plan`, `Research`,
     `Notes`, `Assignments`, `Issue`, `PR`, `Changelog`, `Backlog`, and every
     file under `Work/`.
-- Output expectation: clear execution result; if blocked, describe the
-  blocker and suggested next action.
+- Output expectation: clear execution result focused on what was done, what
+  remains, and, if blocked, the blocker and the suggested next action.
 
 ### 8.21 Template `Prompts/Work - Verify.md`
 
@@ -1455,8 +1466,8 @@ Guidance:
   (see section 4.5). When the verifier reports `FAIL` (or produces an
   invalid result), `Work - Do` records the reason inside the chunk via
   the blocked-reason header from section 4.4a, so the user can read
-  `Work/Blocked.md` and see why each chunk is there without consulting
-  logs.
+  `Work/Blocked.md` and immediately see why each chunk is there without
+  consulting logs.
 
 ### 8.22 Template `Work/Next.md`, `Work/Current.md`, `Work/Blocked.md`, `Work/Done.md`
 
