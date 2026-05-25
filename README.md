@@ -131,17 +131,6 @@ Five roles, each a separate AI session with its own prompt and its own
 small set of input/output files. You move between them at your own pace;
 nothing is automatic across role boundaries.
 
-Inside the Worker role, every chunk in the queue goes through the same
-loop:
-
-```mermaid
-flowchart LR
-    Pop[Pop chunk + capture git HEADs] --> Execute
-    Execute --> Verify
-    Verify -- PASS --> Done
-    Verify -- "FAIL: reason" --> Blocked
-```
-
 Execute and Verify are two separate prompts and can use two different
 models or workers (e.g. a fast model to do the change, a stricter one to
 check it).
