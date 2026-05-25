@@ -1242,7 +1242,10 @@ Guidance:
 - Notes: keep explanations user-facing: say what you are doing, what happens
   next, and how the user can continue. Per-workspace work happens inside
   workspace prompts and markdown files; the global backlog/changelog files
-  live in `Workspaces/Backlog.md` and `Workspaces/Changelog.md`.
+  live in `Workspaces/Backlog.md` and `Workspaces/Changelog.md`. The same
+  fixed launcher mapping is also the handoff mechanism used by every
+  per-workspace agent when the user asks to open or switch to another
+  workspace agent.
 
 ### 8.4 `Workspaces/Backlog.md` and `Workspaces/Changelog.md`
 
@@ -1361,8 +1364,13 @@ Guidance:
   `Workspaces/`; keep a short external-tracker note in this prompt, either
   with the configured tracker details or with an explicit "not configured"
   statement. Explain git actions in plain language first, then run the
-  explicit command if the user wants it.
-- Rules: one question at a time, no push without explicit user request.
+  explicit command if the user wants it. If the user asks to open another
+  workspace agent, resolve the exact launcher with the fixed mapping from
+  section 8.3, explain which launcher you are opening for which workspace,
+  and open it by explicit path.
+- Rules: one question at a time, no push without explicit user request;
+  resolve cross-agent handoffs against the current workspace unless the user
+  names a different workspace.
 
 ### 8.16 Template `Prompts/Research Agent.md`
 
@@ -1371,7 +1379,11 @@ Headings: "Required behavior", "Optional tasks".
 Guidance: mirror section 4.10. Ask for pre-context first, then ask one
 question at a time, then write `Research`. Keep the conversation focused on
 what is being investigated, what is known so far, and what will be looked at
-next. Optionally update `Backlog`.
+next. Optionally update `Backlog`. If the user asks to open another
+workspace agent, resolve the exact launcher with the fixed mapping from
+section 8.3 against the current workspace unless the user names a
+different workspace, explain which launcher you are opening for which
+workspace, and open it by explicit path.
 
 ### 8.17 Template `Prompts/Planner Agent.md`
 
@@ -1410,7 +1422,11 @@ Guidance:
   Keep the plan understandable at a glance: what will be done, in what
   order, and how success will be checked. Defer out-of-scope items to
   `Backlog`. Read only the minimum required files first and do not run broad
-  cross-workspace discovery.
+  cross-workspace discovery. If the user asks to open another workspace
+  agent, resolve the exact launcher with the fixed mapping from section 8.3
+  against the current workspace unless the user names a different
+  workspace, explain which launcher you are opening for which workspace,
+  and open it by explicit path.
 
 ### 8.18 Template `Prompts/Worker Agent.md`
 
@@ -1428,6 +1444,11 @@ Guidance:
   (section 8.17). If `Work/Next` is empty when the user asks the
   Worker to start, instruct the user to run the Planner Agent first
   (or, if they explicitly ask, hand off to planning before executing).
+  If the user asks to open another workspace agent, resolve the exact
+  launcher with the fixed mapping from section 8.3 against the current
+  workspace unless the user names a different workspace, explain which
+  launcher you are opening for which workspace, and open it by explicit
+  path.
 - After each task is verified and moved to `Work/Done`, create a local git
   commit for each changed repository before starting the next task. Commit
   only after successful verification; do not batch commits across tasks; the
@@ -1454,7 +1475,11 @@ Guidance:
   `Backlog`.
 - Rules: explain gaps in plain language; keep status updates concrete and
   measurable; tell the user what is ready, what is still missing, and what
-  follow-up is recommended.
+  follow-up is recommended. If the user asks to open another workspace
+  agent, resolve the exact launcher with the fixed mapping from section 8.3
+  against the current workspace unless the user names a different
+  workspace, explain which launcher you are opening for which workspace,
+  and open it by explicit path.
 
 ### 8.20 Template `Prompts/Work - Execute.md`
 
