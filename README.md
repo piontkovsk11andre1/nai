@@ -19,8 +19,8 @@ Codex, Copilot Chat, …) and send one message:
 > and implement the workflow.
 
 That agent acts as a **scaffolder**: it asks a few questions (natural
-language, OS, scripting language, AI harness) and produces the files
-above. The directory it leaves behind is a self-contained, portable
+language, OS, scripting language, AI harness) and produces the files.
+The directory it leaves behind is a self-contained, portable
 distributive pinned to your platform and harness — copy it to another
 machine and it works as-is.
 
