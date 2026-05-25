@@ -113,40 +113,7 @@ Each new workspace (one per ticket / feature / experiment) is a copy of
 plus its own prompts, plan, status, and work queue. A typical workspace
 looks like this:
 
-```
-Workspaces/PROJ-123-add-login/
-  1. Open Git Agent              per-role launchers
-  2. Open Research Agent
-  3. Open Planner Agent
-  4. Open Worker Agent
-  5. Open Reviewer Agent
-  Workspace.md                   conventions + repo layout for this workspace
-  Issue.md                       the task (pasted in, or pulled from a tracker)
-  Research.md                    findings from the Research role
-  Plan.md                        plan produced by the Planner role
-  Status.md                      Part / Expected / Current / % / Last Checked
-  PR.md                          draft PR description, kept current as you work
-  Backlog.md                     deferred items discovered along the way
-  Changelog.md                   per-workspace changelog
-  Framework.md                   build / test / run / verify notes
-  Assignments.md                 which worker handles which role (human-facing)
-  Notes.md                       free-form scratchpad
-  Prompts/
-    Git Agent.md
-    Research Agent.md
-    Planner Agent.md
-    Worker Agent.md
-    Reviewer Agent.md
-    Work - Execute.md            used by Work - Do to run a chunk
-    Work - Verify.md             used by Work - Do to check the result
-  Work/
-    Next.md                      queued chunks
-    Current.md                   the chunk being executed (with rollback header)
-    Done.md                      finished chunks (rollback headers preserved)
-    Blocked.md                   failed chunks (blocked-reason header attached)
-  repo-a/                        git worktree on the workspace branch
-  repo-b/                        git worktree on the workspace branch
-```
+![Screenshot from Windows](image.png)
 
 ---
 
@@ -161,8 +128,6 @@ You have three equally valid entry points, pick whichever fits:
   to the taskbar, drop them in the Dock, put them on the desktop. One
   top-level launcher for orchestration, five per-workspace launchers
   (Git / Research / Planner / Worker / Reviewer) for each role.
-  
-  ![Screenshot from Windows](image.png)
 - **From your editor.** Ask an AI agent to integrate Nai with your
   editor (VS Code, JetBrains, Zed, whatever) — it knows the layout and
   will pick a sensible way to surface every knob (tasks, run configs,
