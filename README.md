@@ -111,8 +111,17 @@ flowchart LR
     V --> G
 
     subgraph Queue [Work queue]
-        N[Next] --> C[Current] --> D[Done]
-        C -.fail.-> B[Blocked]
+        direction LR
+        N[Next]
+        subgraph Current [Current]
+            direction LR
+            E[Execute] --> Vf{Verify}
+        end
+        D[Done]
+        B[Blocked]
+        N --> E
+        Vf -- PASS --> D
+        Vf -- "FAIL: reason" --> B
     end
 
     W -. drives .-> Queue
