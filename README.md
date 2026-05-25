@@ -1,4 +1,4 @@
-# 🌿 Nai — Naive Agentic Infrastructure
+# 🌾 Nai — Naive Agentic Infrastructure
 
 A 2026-style delivery workflow for AI coding agents, tightly integrated
 with git. It is not a framework you import and not a CLI you install —
