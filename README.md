@@ -64,13 +64,22 @@ flowchart LR
     W -. drives .-> Queue
 ```
 
-Five roles, each a separate AI session with its own prompt and its own
-small set of input/output files. You move between them at your own pace;
+Five roles, each a separate AI session with its own prompt and a small
+set of input/output files. You move between them at your own pace;
 nothing is automatic across role boundaries.
 
-Execute and Verify are two separate prompts and can use two different
-models or workers (e.g. a fast model to do the change, a stricter one to
-check it).
+The flow is deliberately minimal. Every piece earns its keep:
+
+- **Just enough checkpoints.** Each role is a context reset that keeps
+  the agent focused on the step in front of it instead of drifting
+  into future ones.
+- **Order is enforced.** Role boundaries mean Research can't start
+  coding and Worker can't replan.
+- **Right model for each job.** Pick a different model per role and
+  per task type — a cheap fast one for Execute, a stricter one for
+  Verify, a long-context one for Planner.
+- **Early verification.** Every chunk is checked the moment it lands,
+  so a mistake gets caught before it tangles with the next three.
 
 ---
 
