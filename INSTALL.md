@@ -809,6 +809,13 @@ Requirements regardless of language:
 
 Pick the recipe in section 10 that matches the chosen OS. The launcher
 invokes the dispatcher with the appropriate prompt path and worker.
+On Windows, `.lnk` launchers must follow section 10.1 exactly. They must
+not hardcode a user-profile absolute path to the Python launcher. For
+Python-based distributions, set the shortcut `TargetPath` to
+`C:\Windows\System32\cmd.exe` and resolve the launcher inside
+`Arguments` via `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe` so the
+shortcut works for the current Windows user context while preserving the
+agent invocation arguments and working-directory semantics.
 
 ### 5.5 Harness invocation
 
@@ -1145,6 +1152,10 @@ Guidance:
        once the launcher has been switched.
      - Top-level launcher (before the switch in step 8) still parses
        and targets the dispatcher with valid arguments per section 10.
+       On Windows with Python launchers, confirm that `TargetPath` is
+       `C:\Windows\System32\cmd.exe` and that the shortcut arguments
+       resolve `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe` for the
+       current user instead of a hardcoded profile path.
      If any check fails, repair the offending artifact and re-run the
      affected check. Only proceed to step 8 once all checks pass.
 
@@ -1787,22 +1798,37 @@ dispatcher with the appropriate prompt path and worker.
 
 The dispatcher is invoked with the project's interpreter for the chosen
 programming language (for example: `py` on Windows for Python, `python3` on
-macOS/Linux, `bash` for shell scripts, `node` for Node.js).
+macOS/Linux, `bash` for shell scripts, `node` for Node.js). On Windows,
+the `.lnk` wrapper may route through `cmd.exe` as described in section
+10.1 instead of targeting the interpreter binary directly.
 
 ### 10.1 Windows: `.lnk` shortcuts via PowerShell COM
 
-Create shortcuts with `WScript.Shell`:
+Create shortcuts with `WScript.Shell`. For Python-based distributions,
+the shortcut target is `cmd.exe`; the Python launcher is resolved inside
+the shortcut arguments so `%LOCALAPPDATA%` expands for the current user
+at launch time:
 
 ```
 $w = New-Object -ComObject WScript.Shell
 $s = $w.CreateShortcut("<absolute path to .lnk file>")
-$s.TargetPath = "<interpreter binary, for example 'py' or 'node'>"
-$s.Arguments = '"<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<prompt path>" [--workspace "<path>"] --mode tui --agent-name "<Agent Name>" --new-window'
+$s.TargetPath = "C:\Windows\System32\cmd.exe"
+$s.Arguments = '/d /c ""%LOCALAPPDATA%\Programs\Python\Launcher\py.exe" "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<prompt path>" [--workspace "<path>"] --mode tui --agent-name "<Agent Name>" --new-window"'
 $s.WorkingDirectory = "<absolute working directory>"
 $s.Save()
 ```
 
 Notes:
+- Windows shortcuts must not hardcode user-profile absolute paths to the
+  Python launcher.
+- For Python-based distributions, keep `TargetPath` fixed to
+  `C:\Windows\System32\cmd.exe` and resolve the launcher through
+  `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe` inside
+  `Arguments`.
+- If the chosen programming language is not Python, keep the same
+  `cmd.exe` wrapper pattern and substitute the runtime invocation inside
+  `Arguments` while preserving the agent flags and working-directory
+  semantics.
 - Top-level `Open Agent.lnk` uses an absolute prompt path to
   `Prompts/Installation Agent.md` initially. After installation switch it to
   `Prompts/Workspace Agent.md` (same launcher file, only the prompt path
@@ -1858,19 +1884,22 @@ launcher mechanism, not by editing the launcher file as plain text (Windows
 as text).
 
 **Windows (`.lnk`).** Re-open the existing shortcut via `WScript.Shell`,
-mutate only the `Arguments` field, and save in place:
+ensure it targets `C:\Windows\System32\cmd.exe`, update the
+`Arguments` field, and save in place:
 
 ```
 $w = New-Object -ComObject WScript.Shell
 $s = $w.CreateShortcut("<absolute path to existing Open Agent.lnk>")
-$s.Arguments = '"<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<abs path to Prompts/Workspace Agent.md>" --mode tui --agent-name "Workspace Agent" --new-window'
+$s.TargetPath = "C:\Windows\System32\cmd.exe"
+$s.Arguments = '/d /c ""%LOCALAPPDATA%\Programs\Python\Launcher\py.exe" "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<abs path to Prompts/Workspace Agent.md>" --mode tui --agent-name "Workspace Agent" --new-window"'
 $s.Save()
 ```
 
-`TargetPath`, `WorkingDirectory`, and the launcher file name stay identical;
-the required change inside `Arguments` is the `--prompt` value; keeping or
-updating `--agent-name` is optional metadata only. Preserve `--new-window`
-when the Windows launcher uses it.
+`TargetPath` must remain `C:\Windows\System32\cmd.exe`; the launcher file
+name and `WorkingDirectory` stay identical. Inside `Arguments`, preserve the
+`%LOCALAPPDATA%`-based Python launcher resolution and update the `--prompt`
+value; keeping or updating `--agent-name` is optional metadata only.
+Preserve `--new-window` when the Windows launcher uses it.
 
 **macOS (`.command`) and Linux (`.desktop`).** These are plain text files;
 regenerate them via the recipe in section 10.2 or 10.3 with the new prompt
@@ -1992,7 +2021,10 @@ and report results.
    harness command. Example: invoke the dispatcher with
    `--worker Default --prompt <abs Installation Agent path> --mode cli --dry-run`.
 4. Each per-agent launcher has the expected target, arguments, and working
-   directory per section 10.
+  directory per section 10. On Windows with Python launchers, validate that
+  the shortcut target is `C:\Windows\System32\cmd.exe` and that the
+  arguments resolve `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe` in
+  the current user's environment rather than a hardcoded profile path.
 5. `Work - Do` chunk parser round-trip: feed the parser a synthetic input
    already in the writer's canonical form (two non-empty chunks joined by
    `\n---\n\n`, ending with a single trailing newline), write it back via
