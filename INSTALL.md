@@ -42,7 +42,7 @@ Hard rules. Never violate.
   non-zero with a clear message naming the exact argument(s) to add and rerun.
 - Never invent file or directory names beyond what this spec defines. If the
   user requests localized names, you may translate them, but you must record
-  the mapping in section 5.2 (file-name mapping table) and apply it
+  the mapping in the file-name mapping table described in section 5.2 and apply it
   consistently across every file and reference.
 - Do not create extra documentation files (changelogs, decisions logs,
   summaries) beyond those listed in the file manifest.
@@ -105,9 +105,10 @@ deferring it.
    for all generated files? Default: English. If the user picks another
    language, switch immediately, including the next question.
 
-2. **Operating system family.** Windows, macOS, or Linux? Default: detect from
-   environment if you can; otherwise ask. This determines the launcher
-   mechanism in section 10.
+2. **Operating system family.** Windows, macOS, or Linux? Ask this question
+  in order. If you can detect the current OS from the environment, present
+  that detected value as the default in the question; otherwise ask without
+  a default. This determines the launcher mechanism in section 10.
 
 3. **Programming language for scripts.** Default: Python (standard library
    only). Other supported choices: Bash, Node.js, Go. If the user picks
@@ -255,12 +256,12 @@ through. Each wrapper:
   message naming the missing binary.
 - `--context-files` is a hint only. If the harness supports attaching files,
   pass them; otherwise ignore silently.
-- `--new-window` is a Windows-only convenience flag used by per-agent
-  launchers so the launching console does not stay blocked. When set and
-  `--mode tui` and the OS is Windows, the wrapper spawns the harness in a
-  detached new console (e.g. `subprocess.Popen` with `CREATE_NEW_CONSOLE`)
-  and returns 0 immediately without waiting. Ignored on other OSes or in
-  `cli` mode.
+- `--new-window` is a Windows-only convenience flag used by Windows
+  per-agent launchers and the top-level Windows launcher so the launching
+  console does not stay blocked. When set and `--mode tui` and the OS is
+  Windows, the wrapper spawns the harness in a detached new console (e.g.
+  `subprocess.Popen` with `CREATE_NEW_CONSOLE`) and returns 0 immediately
+  without waiting. Ignored on other OSes or in `cli` mode.
 - The harness subprocess is started with its working directory set to the
   resolved `--workspace` path when provided, otherwise the wrapper's current
   working directory.
@@ -364,7 +365,8 @@ Decision order on each invocation:
      naming the two valid values and stop.
    - If `to-current`: pop the first blocked chunk. If `Current` is non-empty,
      exit non-zero. Otherwise write the chunk to `Current`.
-   - If `to-done`: pop the first blocked chunk and append it to `Done` as-is.
+   - If `to-done`: pop the first blocked chunk, strip any blocked-reason
+     header, and append the result to `Done`.
    - Return after handling one blocked item.
 
 2. Else if `Current` is non-empty:
@@ -389,12 +391,12 @@ Decision order on each invocation:
    - Build a tail string equal to the current chunk body (rollback header
      stripped).
    - Invoke the dispatcher with the execution worker, the execute prompt
-     (`Prompts/Work - Execute` inside the workspace), the workspace path,
+     (`Prompts/Work - Execute.md` inside the workspace), the workspace path,
      the mode, and the tail.
    - If the dispatcher exits non-zero: print a clear message that the task
      remains in `Current` and exit with that code.
    - Otherwise invoke the dispatcher again with the verification worker and
-     the verify prompt (`Prompts/Work - Verify` inside the workspace) and the
+     the verify prompt (`Prompts/Work - Verify.md` inside the workspace) and the
      same tail. The verifier dispatcher call must run with `--mode cli`
      regardless of the mode requested by the caller, because the
      `PASS` / `FAIL: <text>` protocol requires a captured stdout that
@@ -508,9 +510,11 @@ Behavior:
    4. Worker Agent
    5. Reviewer Agent
 
-   Each launcher invokes the dispatcher with `--worker Default`,
-   `--prompt Prompts/<Agent>` (relative to the workspace), `--workspace .`,
-   `--mode tui`, and `--agent-name "<Agent>"`.
+  Each launcher invokes the dispatcher with `--worker Default`,
+  `--prompt Prompts/<Agent>.md` (relative to the workspace), `--workspace .`,
+  `--mode tui`, and `--agent-name "<Agent>"`. On Windows, also pass
+  `--new-window` so the worker wrapper can detach into a new console per
+  section 4.2.
 
 ### 4.8 `Workspace - Remove` (archive only)
 
@@ -590,8 +594,8 @@ The Research Agent prompt must instruct the agent to:
 - Execution and verification workers both default to `Default`.
 - Do not read `Assignments` to pick workers automatically. `Assignments` is a
   human-facing preference document only.
-- Execute prompt: `Prompts/Work - Execute` inside the workspace.
-- Verify prompt: `Prompts/Work - Verify` inside the workspace.
+- Execute prompt: `Prompts/Work - Execute.md` inside the workspace.
+- Verify prompt: `Prompts/Work - Verify.md` inside the workspace.
 
 ### 4.12 Launcher switch after installation
 
@@ -602,9 +606,11 @@ scaffolder, you must leave the top-level launcher pointing at the
 
 When the end user later runs the `Installation Agent` and completes its
 checklist, that agent changes the top-level launcher so it opens the
-`Workspace Agent` prompt instead of the `Installation Agent` prompt.
-Nothing else about the launcher changes. The launcher file name stays the
-same.
+`Workspace Agent` prompt instead of the `Installation Agent` prompt. The
+launcher file name stays the same. The required semantic change is the
+prompt target; other metadata such as `--agent-name` may either stay as-is
+or be updated to match the new prompt, as long as the launcher still invokes
+the same dispatcher and worker correctly.
 
 ---
 
@@ -671,6 +677,8 @@ localized names, you may translate them, but you must:
   script reference, and prose mention.
 - Keep the file structure and relationships identical.
 - Use file system-safe characters only.
+- Record the mapping table in `README.md` under a short dedicated section;
+  do not modify `INSTALL.md`.
 
 Canonical names (English defaults):
 
@@ -789,11 +797,11 @@ Requirements regardless of language:
         k32.SetConsoleOutputCP(65001)
     ```
 
-    Use the idiomatic equivalent for the chosen programming language
-    (Node.js: same `kernel32` call via `ffi-napi`, or `chcp 65001` in a
-    `.cmd` shim; Bash on Windows: not applicable). This is in addition
-    to, not a replacement for, the Python-side `PYTHONIOENCODING` /
-    `sys.stdout.reconfigure` settings above.
+    Use the idiomatic equivalent for the chosen programming language.
+    If the chosen language cannot do this without third-party
+    dependencies, recommend Python instead of adding extra packages.
+    This is in addition to, not a replacement for, the Python-side
+    `PYTHONIOENCODING` / `sys.stdout.reconfigure` settings above.
   Pick the idiomatic enforcement for the chosen language and apply it in
   every script the scaffolder produces.
 
@@ -997,7 +1005,7 @@ Guidance:
            `git clone <url> <folder>` inside `Workspaces/__template__/`;
        (b) "local-only" -- the agent will `git init` a fresh repo with
            one empty initial commit (`git commit --allow-empty -m
-           <init message>`) on the default baseline branch.
+           <init message>`) on the default baseline branch `main`.
      - **Branch (optional).** Only meaningful for clone sources. If
        provided, check out that branch after cloning
        (`git -C <folder> checkout <branch>`). If omitted, accept the
@@ -1108,7 +1116,7 @@ Guidance:
      - Every repository directory the user added in step 2 exists at
        `Workspaces/__template__/<folder>/`, is a real git repository
        (`<folder>/.git` exists), is on the expected branch (the
-       requested branch for clones, the default baseline branch for
+       requested branch for clones, the default baseline branch `main` for
        local-only repos), and has a resolvable `HEAD`
        (`git -C <folder> rev-parse --verify HEAD` succeeds). Cloned
        repos have their upstream set as configured by `git clone`, and
@@ -1202,6 +1210,9 @@ Guidance:
     - Planner -> `3. Open Planner Agent` launcher
     - Worker -> `4. Open Worker Agent` launcher
     - Reviewer -> `5. Open Reviewer Agent` launcher
+  - The exact launcher filename is the mapped basename plus the OS-specific
+    launcher extension for the installation OS: `.lnk` on Windows,
+    `.command` on macOS, `.desktop` on Linux.
   - The launcher is opened by explicit path only:
     `Workspaces/<workspace>/<launcher-file>`. On Windows that means
     `Start-Process -FilePath "<absolute-launcher-path>"`. On other OSes
@@ -1336,7 +1347,9 @@ Guidance:
 - Typical tasks: bring task details into `Issue`; update issue comments and
   status; prepare PR using `PR.md`; perform explicit git operations on
   request; sync workspace `Backlog` and `Changelog` into the global ones in
-  `Workspaces/`. Explain git actions in plain language first, then run the
+  `Workspaces/`; keep a short external-tracker note in this prompt, either
+  with the configured tracker details or with an explicit "not configured"
+  statement. Explain git actions in plain language first, then run the
   explicit command if the user wants it.
 - Rules: one question at a time, no push without explicit user request.
 
@@ -1691,8 +1704,8 @@ def main():
     args = parse()
     bootstrap = "Read the file at '" + absolute(args.prompt) + \
                 "' and follow the instructions exactly."
-    if args.tail.strip():
-        bootstrap += "\n\n" + tail_prefix(language) + "\n" + args.tail.strip()
+  if args.tail and args.tail.strip():
+    bootstrap += "\n\n" + tail_prefix(language) + "\n" + args.tail
     binary = resolve_harness_binary("opencode")  # or chosen harness
     if binary is None:
         print_error("Could not start '<harness>'. Install it or update this wrapper.")
@@ -1784,7 +1797,7 @@ Create shortcuts with `WScript.Shell`:
 $w = New-Object -ComObject WScript.Shell
 $s = $w.CreateShortcut("<absolute path to .lnk file>")
 $s.TargetPath = "<interpreter binary, for example 'py' or 'node'>"
-$s.Arguments = '"<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<prompt path>" [--workspace "<path>"] --mode tui --agent-name "<Agent Name>"'
+$s.Arguments = '"<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<prompt path>" [--workspace "<path>"] --mode tui --agent-name "<Agent Name>" --new-window'
 $s.WorkingDirectory = "<absolute working directory>"
 $s.Save()
 ```
@@ -1834,8 +1847,10 @@ additionally provide a plain shell wrapper similar to the macOS recipe.
 ### 10.4 Switching the top-level launcher after installation
 
 At the end of installation, regenerate or edit the top-level launcher so its
-prompt argument points to `Prompts/Workspace Agent.md` (absolute path) and
-all other arguments stay identical. The launcher file name does not change.
+prompt argument points to `Prompts/Workspace Agent.md` (absolute path). The
+launcher file name does not change. Keep the dispatcher, worker, mode, and
+working directory semantics identical; metadata such as `--agent-name` may be
+left unchanged or updated to match the new prompt.
 
 The Installation Agent must perform this switch through the OS-native
 launcher mechanism, not by editing the launcher file as plain text (Windows
@@ -1848,13 +1863,14 @@ mutate only the `Arguments` field, and save in place:
 ```
 $w = New-Object -ComObject WScript.Shell
 $s = $w.CreateShortcut("<absolute path to existing Open Agent.lnk>")
-$s.Arguments = '"<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<abs path to Prompts/Workspace Agent.md>" --mode tui --agent-name "Workspace Agent"'
+$s.Arguments = '"<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<abs path to Prompts/Workspace Agent.md>" --mode tui --agent-name "Workspace Agent" --new-window'
 $s.Save()
 ```
 
 `TargetPath`, `WorkingDirectory`, and the launcher file name stay identical;
-only the `--prompt` argument inside `Arguments` changes (and `--agent-name`
-if you choose to update the metadata label).
+the required change inside `Arguments` is the `--prompt` value; keeping or
+updating `--agent-name` is optional metadata only. Preserve `--new-window`
+when the Windows launcher uses it.
 
 **macOS (`.command`) and Linux (`.desktop`).** These are plain text files;
 regenerate them via the recipe in section 10.2 or 10.3 with the new prompt
@@ -1944,7 +1960,10 @@ and report results.
 
 0. **Cleanup pass.** Before running the remaining checks, walk the entire
    workflow root and delete every file or directory that is not part of
-   the file manifest in section 7. This explicitly includes:
+  the file manifest in section 7 and was created by scaffolding,
+  verification, or rehearsal. Preserve any pre-existing user workspaces
+  under `Workspaces/` other than throwaway rehearsal paths created by this
+  run. This explicitly includes:
    - any scratch or test files you created while writing or verifying
      scripts (e.g. `test_*.py`, `tmp.md`, sample inputs, throwaway
      `Workspaces/<name>/` directories used to dry-run create/remove);
@@ -1961,11 +1980,12 @@ and report results.
    `Configuration/`, `Documentation/`, `Implementation/`, or other
    repo directories the rehearsal (section 13.5) or a previous aborted
    run may have left behind must be removed in this pass. After this
-   pass, the workflow root tree must match section 7 exactly, with
-   nothing extra.
+   pass, the manifest-managed portions of the workflow root tree must
+   match section 7 exactly, with no extra scaffolder-created artifacts.
 
-1. Every file from section 7 exists and is non-empty (zero-byte files are a
-   failure).
+1. Every file from section 7 exists. Every manifest file that is specified
+   to carry content must be non-empty; the four template `Work/*.md` queue
+   files may be zero-byte by design.
 2. All generated scripts are syntactically valid (compile, parse, or
    lint depending on the language).
 3. Dispatcher dry-run with the Installation Agent prompt prints a valid
@@ -1991,6 +2011,10 @@ and report results.
    `UnicodeEncodeError`). Also append a non-ASCII test line via
    `WorkflowLog` to a scratch workspace and confirm the resulting
    `log.txt` reads back as UTF-8.
+
+9. Post-check cleanup: remove any synthetic files and scratch workspaces
+  created by verification steps 5 and 8 so the tree returns to the
+  post-scaffold state expected by step 0.
 
 If any check fails, repair before handoff.
 
