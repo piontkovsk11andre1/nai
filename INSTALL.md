@@ -435,7 +435,10 @@ Additional context passed to the dispatcher: build the `--context-files`
 value from existing artifacts in the workspace such as
 `Issue`, `Research`, `Plan`, `Status`, `Framework`, `Notes`, `Assignments`,
 `Work/Current`, `Work/Done`. Only include files that exist. Use absolute
-paths.
+paths. `Facts.md` is intentionally **excluded** from this list even when
+it exists: per section 8.22 it is a search-on-demand reference and must
+not be auto-attached, so agents look up only the relevant section instead
+of reading the whole file.
 
 ### 4.6 `Work - Undo` state machine
 
@@ -596,6 +599,10 @@ The Research Agent prompt must instruct the agent to:
   human-facing preference document only.
 - Execute prompt: `Prompts/Work - Execute.md` inside the workspace.
 - Verify prompt: `Prompts/Work - Verify.md` inside the workspace.
+- `Facts.md` is **not** added to the dispatcher's `--context-files`
+  even when present (see section 4.5). The Execute and Verify prompts
+  are aware of it and may consult it on demand by searching for the
+  relevant section title.
 
 ### 4.12 Launcher switch after installation
 
@@ -611,6 +618,38 @@ launcher file name stays the same. The required semantic change is the
 prompt target; other metadata such as `--agent-name` may either stay as-is
 or be updated to match the new prompt, as long as the launcher still invokes
 the same dispatcher and worker correctly.
+
+### 4.13 Per-workspace agent TUI welcome and idle-on-start
+
+Applies to exactly these five per-workspace agent prompts:
+`Prompts/Git Agent.md`, `Prompts/Research Agent.md`,
+`Prompts/Planner Agent.md`, `Prompts/Worker Agent.md`,
+`Prompts/Reviewer Agent.md` (the prompts copied into every workspace by
+`Workspace - Create`). Does **not** apply to `Installation Agent.md`,
+`Workspace Agent.md`, `Work - Execute.md`, or `Work - Verify.md`.
+
+Required behavior at session start when the agent is invoked in
+`--mode tui`:
+
+- The agent's very first message is a short welcome that names its role
+  and then waits for user input. It must not read workspace files, run
+  any tools, or start any task before the user replies.
+- The welcome is a single short translated sentence built from this
+  canonical English template:
+  `Hello, I am the <Agent Name>. What would you like to do?`
+  `<Agent Name>` is the human-facing agent role name (`Git Agent`,
+  `Research Agent`, `Planner Agent`, `Worker Agent`, `Reviewer Agent`)
+  and is inserted verbatim. The sentence wording itself is translated
+  at scaffold time per section 5.1 and reused consistently across the
+  five prompts.
+- The welcome may be followed by one optional short hint line (still
+  before any work) reminding the user that they can describe a task or
+  ask the agent to summarize its capabilities. The hint is optional;
+  the greet-and-wait rule is not.
+
+In `--mode cli` (unattended) the rule does **not** apply: the agent
+should begin acting on the prompt and the `--tail` payload immediately,
+because there is no interactive user to greet.
 
 ---
 
@@ -712,6 +751,7 @@ Workspaces/
     Assignments.md
     Backlog.md
     Changelog.md
+    Facts.md
     Framework.md
     Issue.md
     Notes.md
@@ -899,6 +939,9 @@ Create exactly these files. Do not create more, do not skip any.
 - `Assignments.md` - free-form worker preference notes (human-facing only).
 - `Backlog.md` - per-workspace backlog stub.
 - `Changelog.md` - per-workspace changelog stub.
+- `Facts.md` - durable, agent-curated record of confirmed facts about
+  the workspace and project; append-only `## <Title>` sections; see
+  section 8.22.
 - `Framework.md` - high-level project navigation and build/test/run/verify
   notes; stub explains brownfield assumption when empty.
 - `Issue.md` - structured issue capture stub.
@@ -1202,7 +1245,8 @@ Guidance:
   top-level launcher switched to `Workspace Agent`; any
   integration-related edits from step 6 applied to the existing files
   named in that step (no new files or scripts outside the section 7
-  manifest).
+  manifest). The scaffolder-provided `Workspaces/__template__/Facts.md`
+  stub (section 8.22) is left in place untouched by this agent.
 
 ### 8.3 `Prompts/Workspace Agent.md`
 
@@ -1212,6 +1256,7 @@ Guidance:
 - Responsibilities:
   - create a workspace via `Workspace - Create`,
   - archive a workspace via `Workspace - Remove --synced`,
+  - **merge facts** on user request (see below),
   - open per-workspace agents by resolving the user's agent name to the
     exact per-workspace launcher file via this fixed mapping (no fuzzy
     lookup). Explain which launcher you are opening and for which
@@ -1228,6 +1273,40 @@ Guidance:
     `Workspaces/<workspace>/<launcher-file>`. On Windows that means
     `Start-Process -FilePath "<absolute-launcher-path>"`. On other OSes
     invoke the launcher equivalently (see section 10).
+  - **Merge facts** procedure (on explicit user request, and offered
+    before archival per below):
+    1. Enumerate live workspaces: every immediate subdirectory of
+       `Workspaces/` whose name is **not** `__template__` and **not**
+       `__archive__`. The `__archive__/` subtree is never read or
+       written by this procedure.
+    2. For each live workspace, read its `Facts.md` (skip silently if
+       the file is absent or empty).
+    3. Produce an updated `Workspaces/__template__/Facts.md` that
+       semantically merges new and corrected `## <Title>` sections from
+       the workspaces while honoring the version-control-friendly
+       editing rules in section 8.22:
+       - existing sections in the template keep their position; if a
+         workspace has a corrected version of a section with the same
+         title, edit only that section's body in the template; do not
+         reorder, retitle, or reflow surrounding sections;
+       - new titles found only in workspaces are appended to the end
+         of the template in the order discovered;
+       - never rename a section (titles are anchors); supersede with
+         a new section if a title must change.
+    4. After the template `Facts.md` is updated, **overwrite**
+       `Facts.md` in every live workspace (same set as step 1) with
+       the merged template content. The `__archive__` subtree is left
+       untouched.
+    5. Explain to the user what changed (which sections were added,
+       which were revised, which workspaces contributed) in plain
+       language. Do not commit, do not push.
+  - **Before archival**: when the user asks to archive a workspace,
+    first ask one yes/no question -- "Merge facts from workspaces into
+    the template before archiving?" -- and run the merge procedure
+    above if the user accepts. Then proceed to `Workspace - Remove
+    --synced` regardless of the answer (declining the merge is not a
+    reason to skip archival). Never run the merge silently or without
+    confirmation.
 - Rules:
   - one question at a time, explicit confirmation for archive, no remote
     push,
@@ -1385,17 +1464,64 @@ section 8.3 against the current workspace unless the user names a
 different workspace, explain which launcher you are opening for which
 workspace, and open it by explicit path.
 
+Treat `Research.md` as a **living document, edited in place**, not as an
+append-only log:
+- When new evidence contradicts a previous finding, revise that finding
+  directly (correct the wording, replace the answer, or remove a bullet
+  that is now wrong). Do not let outdated answers linger next to the
+  corrected ones.
+- Reorganize sections when it helps clarity (group related answers,
+  collapse duplicates), but keep the file readable as a Q&A or technical
+  log rather than turning it into a dump.
+- The file is tracked in version control: prefer minimal,
+  paragraph-scoped edits over wholesale rewrites so diffs stay
+  reviewable. Hard-wrap prose at a reasonable width and do not reflow
+  unrelated paragraphs when editing one section.
+- Confirmed durable facts that are likely to be re-used across tasks
+  (project conventions, decisions, environment specifics) are recorded
+  by the Planner Agent in `Facts.md` (section 8.22). The Research Agent
+  may suggest a fact for `Facts.md` but does not append to it directly
+  unless the user explicitly confirms; that is the Planner's role.
+
 ### 8.17 Template `Prompts/Planner Agent.md`
 
-Headings: "Inputs", "Outputs", "Existing plan policy", "Work queue
-seeding", "Notes".
+Headings: "Inputs", "Outputs", "Interview flow", "Existing plan policy",
+"Work queue seeding", "Notes".
 
 Guidance:
 - Inputs: `Issue`, `Research`, `Notes`, `Changelog`, `Framework`,
-  `Work/Next` (to see what is already queued).
-- Outputs: `Plan`, `Status` (with the columns from section 4.9), and
+  `Work/Next` (to see what is already queued). `Facts.md` exists in the
+  workspace and is **searched on demand only** -- never read end-to-end
+  and never preloaded. Before asking the user any question, search
+  `Facts.md` for a matching `## <Title>` section by keyword; if a
+  relevant section exists, treat its body as authoritative and skip
+  that question.
+- Outputs: `Plan`, `Status` (with the columns from section 4.9),
   `Work/Next` (the initial set of actionable chunks derived from the
-  plan).
+  plan), and **appended sections** in `Facts.md` recording confirmed
+  durable answers from the interview (see "Interview flow" below).
+- Interview flow (applies when the user invokes the Planner without
+  specific instructions, e.g. just says "plan"):
+  1. Read the inputs above (excluding `Facts.md` -- search-only).
+  2. Conduct an interview, **one question at a time**. Acknowledge each
+     answer briefly before asking the next question.
+  3. At any point the user may delegate a question back -- e.g. "find
+     the answer" or "propose options". The Planner then researches or
+     reasons about the question itself and proposes one or more options
+     for the user to confirm or correct.
+  4. For questions whose answer is obvious or low-risk, the Planner may
+     proactively offer its own answers in a short batch and ask the
+     user to confirm or correct them, instead of asking each question
+     in turn.
+  5. Never re-ask something already recorded in `Facts.md`. Search
+     first by title or keyword; if the relevant section is present,
+     use it as the answer.
+  6. When the interview ends, append the confirmed durable answers to
+     `Facts.md` as one or more new `## <Title>` sections per the
+     append-only, VC-friendly rules in section 8.22. Do not edit
+     existing sections; do not rename or reorder anything. Skip
+     answers that are ephemeral or task-local (those belong in `Plan`,
+     `Notes`, or `Issue`, not in `Facts.md`).
 - Existing plan policy:
   - If `Plan.md` already exists, do not rewrite or replace it unless the
     user explicitly asks for a rewrite.
@@ -1434,7 +1560,11 @@ Headings: "Inputs", "Responsibilities", "Rules".
 
 Guidance:
 - Inputs: `Plan`, `Issue`, `Notes`, `Changelog`, `Research`, `Status`,
-  `Framework`, `Assignments`, `Work/Next`.
+  `Framework`, `Assignments`, `Work/Next`. `Facts.md` exists in the
+  workspace and is **searched on demand only** -- never read end-to-end
+  and never preloaded. When a question about project conventions or
+  prior decisions comes up, search `Facts.md` for a matching
+  `## <Title>` section by keyword and read only that section.
 - Responsibilities: invoke `Work - Do`; resolve `Blocked`/`Current`
   decisions via explicit CLI arguments; invoke `Work - Undo` when
   rollback is requested; refine work toward 100% in `Status` or
@@ -1454,6 +1584,12 @@ Guidance:
   only after successful verification; do not batch commits across tasks; the
   commit message references the completed task block intent; never push
   unless the user explicitly asks.
+- When a durable, reusable fact is confirmed by the user during
+  execution (a project convention, a decision, an environment detail
+  worth carrying across tasks), append it to `Facts.md` as a new
+  `## <Title>` section per section 8.22. Only append on explicit user
+  confirmation; never edit or remove existing sections; ephemeral
+  task-specific notes go in `Notes` or `Plan`, not `Facts`.
 - Rules: one question at a time when clarifying; keep operations explicit
   and script-driven; workflow scripts live at workflow root `Scripts/`, not
   inside workspace directories (never propose creating `Work - Do` or
@@ -1487,13 +1623,17 @@ Headings: "Inputs", "Required behavior", "Output expectation".
 
 Guidance:
 - Inputs: the current work chunk and the artifacts listed in section 4.5.
+  `Facts.md` exists in the workspace but is **not auto-attached** to the
+  dispatcher's `--context-files`; when a relevant project convention or
+  prior decision is needed, search `Facts.md` for a matching
+  `## <Title>` section by keyword and read only that section.
 - Required behavior:
   - apply changes scoped to the active chunk's intent;
   - report what was changed and what remains;
   - do not update workflow coordination files. Treat the following as
     read-only context during execution: `Status`, `Plan`, `Research`,
-    `Notes`, `Assignments`, `Issue`, `PR`, `Changelog`, `Backlog`, and every
-    file under `Work/`.
+    `Notes`, `Assignments`, `Issue`, `PR`, `Changelog`, `Backlog`,
+    `Facts`, and every file under `Work/`.
 - Output expectation: clear execution result focused on what was done, what
   remains, and, if blocked, the blocker and the suggested next action.
 
@@ -1502,7 +1642,9 @@ Guidance:
 Headings: "Inputs", "Required behavior", "Output expectation".
 
 Guidance:
-- Inputs: same as Execute.
+- Inputs: same as Execute. `Facts.md` is likewise present but not
+  auto-attached; search by section title for any convention or decision
+  needed to judge whether the change is acceptable.
 - Required behavior: validate that execution matches chunk intent; run
   verification steps relevant to the change.
 - Output expectation: the last non-empty line of the verifier's output must
@@ -1518,7 +1660,66 @@ Guidance:
   `Work/Blocked.md` and immediately see why each chunk is there without
   consulting logs.
 
-### 8.22 Template `Work/Next.md`, `Work/Current.md`, `Work/Blocked.md`, `Work/Done.md`
+### 8.22 Template `Facts.md`
+
+Durable, agent-curated record of confirmed facts about the workspace
+and its project (project conventions, decisions, environment specifics,
+resolved ambiguities). Primarily written by the Planner Agent at the
+end of its interview (section 8.17); the Worker Agent may also append
+facts that the user explicitly confirms during execution
+(section 8.18). The file ships as a stub created by the scaffolder and
+is included in the per-workspace template so every workspace gets a
+copy on `Workspace - Create`.
+
+Format: an append-only sequence of level-2 sections. Each section is
+exactly:
+
+```
+## <Short Title>
+
+<body: paragraphs or bullet points>
+```
+
+with one blank line between the heading and the body, and one blank
+line separating each section from the next. There is no automatic
+deduplication, no reordering, and no rewriting of existing sections by
+any agent except during the explicit Workspace-Agent-driven merge
+described in section 8.3.
+
+Read pattern: agents must **search/grep** `Facts.md` for a relevant
+`## <Title>` or keyword and read only the matching section(s). They
+must not read the file end-to-end. `Facts.md` is intentionally
+excluded from the dispatcher's `--context-files` for the same reason
+(sections 4.5 and 9.4).
+
+Version-control friendliness (the file is tracked in git): writes must
+produce minimal, line-stable diffs.
+
+- UTF-8 encoding, LF line endings, single trailing newline at EOF.
+- No trailing whitespace on any line.
+- Each section is exactly one `## <Title>` heading line, one blank
+  line, the body, then one blank line before the next section.
+- Hard-wrap soft prose at a reasonable width (~100 columns) so prose
+  edits diff line-by-line. Do not reflow unrelated paragraphs when
+  editing a single section.
+- Appends touch only the tail of the file; existing bytes are
+  unchanged.
+- The explicit Workspace-Agent merge (section 8.3) preserves the order
+  of unchanged sections; revisions edit only the affected section's
+  body and never reorder, retitle, or reflow surrounding sections.
+- Titles are stable identifiers: once a section is written, its
+  `## <Title>` line is the anchor used by merges and by on-demand
+  search. Do not rename a section in place; if a title must change,
+  supersede it with a new section appended at the end (the old
+  section can later be removed during a merge if it is genuinely
+  obsolete, but never silently retitled).
+
+Stub content: one short introductory paragraph explaining the purpose,
+the append-only `## <Title>` format, and the search-only read rule,
+plus one example `## Example fact` section the user can replace or
+delete.
+
+### 8.23 Template `Work/Next.md`, `Work/Current.md`, `Work/Blocked.md`, `Work/Done.md`
 
 All four work-queue files in the template are empty files. They exist so the
 workspace structure is complete on copy, but they carry no instructional
@@ -1686,7 +1887,9 @@ Rollback header helpers:
 
 Dispatcher invocation: spawn the interpreter on `Scripts/Agent.<ext>` with
 the canonical arguments. Build `--context-files` from the existing workspace
-artifacts listed in section 4.5. The verifier dispatcher call is always
+artifacts listed in section 4.5. **Never include `Facts.md`** in this
+list even when the file exists; Facts is a search-on-demand reference
+(see section 8.22). The verifier dispatcher call is always
 made with `--mode cli` (regardless of the mode the caller of `Work - Do`
 requested) and captures its stdout so the trailing `PASS` / `FAIL: <text>`
 line can be parsed; stderr may be streamed live. The executor call uses
@@ -2088,8 +2291,20 @@ and report results.
    `WorkflowLog` to a scratch workspace and confirm the resulting
    `log.txt` reads back as UTF-8.
 
-9. Post-check cleanup: remove any synthetic files and scratch workspaces
-  created by verification steps 5 and 8 so the tree returns to the
+9. `Workspaces/__template__/Facts.md` exists and is non-empty, contains
+   the stub explanation and at least one `## <Title>` example section,
+   ends with a single trailing newline, and uses LF line endings with
+   no trailing whitespace (section 8.22).
+
+10. `Work - Do` context-file selection excludes `Facts.md`. Create a
+    scratch workspace, write a non-empty `Facts.md` next to the usual
+    artifacts, and confirm a `Work - Do --dry-run` invocation produces
+    a dispatcher command whose `--context-files` value does **not**
+    contain `Facts.md` even though the file exists (sections 4.5, 4.11,
+    9.4). Remove the scratch workspace in step 11.
+
+11. Post-check cleanup: remove any synthetic files and scratch workspaces
+  created by verification steps 5, 8, and 10 so the tree returns to the
   post-scaffold state expected by step 0.
 
 If any check fails, repair before handoff.

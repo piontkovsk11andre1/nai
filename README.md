@@ -110,8 +110,9 @@ Workspaces/
 
 Each new workspace (one per ticket / feature / experiment) is a copy of
 `__template__` with git worktrees attached for the repos you work on,
-plus its own prompts, plan, status, and work queue. A typical workspace
-looks like this:
+plus its own prompts, plan, status, work queue, and a durable
+`Facts.md` that captures confirmed project facts across tasks. A typical
+workspace looks like this:
 
 ![Screenshot from Windows](image.png)
 
@@ -174,6 +175,13 @@ A few things that make this different from "just prompting an agent":
   table (Part / Expected / Current / Completion % / Last Checked) the
   Planner and Reviewer keep current; any row below 100% feeds the next
   planning pass.
+- **Durable facts across tasks.** The Planner's interview appends
+  confirmed answers (project conventions, decisions, environment
+  specifics) as `## <Title>` sections to `Facts.md`. Agents grep that
+  file on demand instead of re-asking the same questions in the next
+  task. The Workspace Agent can later merge facts from every live
+  workspace into the template and push the merged file back into each
+  live workspace; archived workspaces are left untouched.
 - **Workspace isolation via git worktrees.** Multiple workspaces can
   point at the same repos on different branches without stepping on
   each other.
