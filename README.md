@@ -100,21 +100,49 @@ Scripts/
   Workspace - Remove.<ext>
   Work - Do.<ext>
   Work - Undo.<ext>
+  WorkflowLog.<ext>                 shared logging utility
   Workers/Default.<ext>             AI harness wrapper
 Workspaces/
-  Backlog.md
-  Changelog.md
+  Backlog.md                        global backlog (Git Agent syncs into)
+  Changelog.md                      global changelog (Git Agent syncs into)
   __template__/                     copied for every new workspace
+    1. Open Git Agent.<launcher>    per-agent launchers
+    2. Open Research Agent.<launcher>
+    3. Open Planner Agent.<launcher>
+    4. Open Worker Agent.<launcher>
+    5. Open Reviewer Agent.<launcher>
+    Workspace.md                    structure, naming, branch conventions
+    Assignments.md                  worker preference notes
+    Backlog.md                      per-workspace backlog
+    Changelog.md                    per-workspace changelog
+    Facts.md                        durable confirmed facts (append-only)
+    Framework.md                    navigation map + build/test/run/verify
+    Issue.md                        structured task capture
+    Notes.md                        free-form notes
+    Plan.md                         plan, risks, verification strategy
+    PR.md                           pull request draft
+    Research.md                     research log (edited in place)
+    Status.md                       Part/Expected/Current/% table
+    Prompts/                        per-workspace agent prompts
+      Git Agent.md
+      Research Agent.md
+      Planner Agent.md
+      Worker Agent.md
+      Reviewer Agent.md
+      Work - Execute.md
+      Work - Verify.md
+    Work/                           markdown-backed task queue
+      Next.md
+      Current.md
+      Blocked.md
+      Done.md
   __archive__/                      finished workspaces land here
 ```
 
 Each new workspace (one per ticket / feature / experiment) is a copy of
 `__template__` with git worktrees attached for the repos you work on,
 plus its own prompts, plan, status, work queue, and a durable
-`Facts.md` that captures confirmed project facts across tasks. A typical
-workspace looks like this:
-
-![Screenshot from Windows](image.png)
+`Facts.md` that captures confirmed project facts across tasks.
 
 ---
 
