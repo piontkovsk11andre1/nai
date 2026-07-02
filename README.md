@@ -104,7 +104,7 @@ Scripts/
   Workspace - Remove.<ext>
   Work - Do.<ext>
   Work - Undo.<ext>
-  WorkflowLog.<ext>                 shared logging utility
+  Logger.<ext>                      shared logging utility
   Workers/Default.<ext>             AI harness wrapper
 Workspaces/
   Backlog.md                        global backlog (Integration Agent syncs into)

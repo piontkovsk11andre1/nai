@@ -811,7 +811,7 @@ Scripts/
   Workspace - Remove.<ext>
   Work - Do.<ext>
   Work - Undo.<ext>
-  WorkflowLog.<ext>                               (shared logging utility, section 9.7)
+  Logger.<ext>                                    (shared logging utility, section 9.7)
   Workers/
     Default.<ext>
 Workspaces/
@@ -855,7 +855,7 @@ Workspaces/
 etc.). Launchers have OS-specific extensions per section 10.
 
 Note: each workspace also accumulates a plain-text `log.txt` at its root
-once `WorkflowLog` (section 9.7) writes to it. This file is created on
+once `Logger` (section 9.7) writes to it. This file is created on
 demand by workflow scripts, is not part of the template, and is not
 listed in the manifest tree above; the verification cleanup pass
 (section 13 step 0) leaves any existing `log.txt` inside live workspaces
@@ -891,7 +891,7 @@ Requirements regardless of language:
     pass through unchanged; set `PYTHONIOENCODING=utf-8` (or the
     equivalent) in the child environment when spawning interpreters of the
     same language so the chain stays UTF-8 end to end;
-  - log files written by `WorkflowLog` (section 9.7) are opened in UTF-8
+  - log files written by `Logger` (section 9.7) are opened in UTF-8
     explicitly;
   - **Windows console code page.** On Windows, the console code page
     (not `PYTHONIOENCODING`) is what every non-Python child inherits,
@@ -1002,7 +1002,7 @@ Create exactly these files. Do not create more, do not skip any.
 - `Scripts/Work - Undo.<ext>` - section 4.6 and 9.5.
 - `Scripts/Workers/Default.<ext>` - worker wrapper for the chosen harness in
   CLI and TUI modes (section 4.2, 9.6, and 11).
-- `Scripts/WorkflowLog.<ext>` - shared logging utility (section 9.7) imported
+- `Scripts/Logger.<ext>` - shared logging utility (section 9.7) imported
   by the workflow scripts above.
 
 ### Workspaces root
@@ -2101,7 +2101,7 @@ wrapper returns 0 immediately without waiting on the child.
 Working directory for the harness subprocess is the resolved `--workspace`
 path when provided; otherwise the wrapper's current working directory.
 
-### 9.7 `WorkflowLog`
+### 9.7 `Logger`
 
 A tiny shared utility imported by the workflow scripts (`Work - Do`,
 `Work - Undo`, `Workspace - Create`, `Workspace - Remove`). It exposes one
@@ -2409,7 +2409,7 @@ and report results.
    Agent prompt and confirm the printed harness command, including the
    translated bootstrap sentence, appears correctly (no mojibake, no
    `UnicodeEncodeError`). Also append a non-ASCII test line via
-   `WorkflowLog` to a scratch workspace and confirm the resulting
+  `Logger` to a scratch workspace and confirm the resulting
    `log.txt` reads back as UTF-8.
 
 9. `Workspaces/__template__/Facts.md` exists and is non-empty, contains
