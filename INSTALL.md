@@ -185,7 +185,7 @@ The scaffolded distributive must ship as a clean, generic baseline:
   rewrites them to match the user's actual conventions.
 - `Workspaces/__template__/Framework.md` is left as the brownfield stub
   from section 8.8. The `Installation Agent` optionally fills it in.
-- `Workspaces/__template__/Prompts/Git Agent.md` is left with the
+- `Workspaces/__template__/Prompts/Integration Agent.md` is left with the
   "not configured" external-tracker section from section 8.15. The
   `Installation Agent` updates it.
 
@@ -471,12 +471,17 @@ Destructive intent is by design: dirty working trees are erased.
 
 Invoked with:
 
-- `--workspace <relative-path>` (required; relative to the `Workspaces` root)
+- `--workspace <name>` (required; a single path-safe segment under the
+  `Workspaces` root)
 - `--branch <branch-name>` (required)
 
 Behavior:
 
-1. Refuse if the target directory already exists. This existence check
+1. Validate the workspace name before touching the destination path.
+  Reject empty names, path separators, `.` and `..`, reserved names
+  `__template__` and `__archive__`, and any input that would resolve
+  outside the `Workspaces` root.
+2. Refuse if the target directory already exists. This existence check
    must be the **very first** action on the destination path, before any
    other side effect that could create or touch it. In particular, the
    workspace logging helper from section 9.7 creates the workspace
@@ -485,13 +490,13 @@ Behavior:
    silently clobber a pre-existing workspace. Order the script as:
    `dest.exists()` check first, then create the destination directory,
    then log.
-2. Copy every non-git, non-launcher file and directory from
+3. Copy every non-git, non-launcher file and directory from
    `Workspaces/__template__` into the new workspace path. Skip launcher files
    (they are regenerated in step 5).
-3. Discover repositories: every immediate subdirectory of
+4. Discover repositories: every immediate subdirectory of
    `Workspaces/__template__` that contains a `.git` entry (file or directory)
    is a repository.
-4. For each discovered repository:
+5. For each discovered repository:
    - Require an existing `HEAD` commit. If `git rev-parse --verify HEAD`
      fails, abort the entire create with a clear message instructing the
      user to run installation setup so each template repo has at least one
@@ -500,14 +505,14 @@ Behavior:
    - If the current branch has a configured upstream, run `git pull --ff-only`
      in the template repo. If it does not, skip the pull.
    - If a local branch with the requested workspace branch name already exists
-     in that repo, attach a worktree at `<workspace>/<repo-name>` to it.
+    in that repo, attach a worktree at `<workspace-name>/<repo-name>` to it.
      Otherwise create a new branch from `HEAD` and create the worktree.
-5. Generate per-agent launchers inside the new workspace using the recipe in
+6. Generate per-agent launchers inside the new workspace using the recipe in
    section 10 for the OS chosen at installation time. The script only emits
    launchers for that OS; on other OSes the step is a silent no-op so
    workspace creation still succeeds when the directory tree is shared
    across machines. Five launchers, numbered:
-   1. Git Agent
+  1. Integration Agent
    2. Research Agent
    3. Planner Agent
    4. Worker Agent
@@ -523,17 +528,21 @@ Behavior:
 
 Invoked with:
 
-- `--workspace <relative-path>` (required, relative to the `Workspaces` root)
+- `--workspace <name>` (required; a single path-safe segment under the
+  `Workspaces` root)
 - `--synced` (required flag; without it the script refuses to run)
 - `--include-uncommitted` (optional flag; allow archiving with dirty
   worktrees and snapshot their working-tree files into the archive)
 
 Behavior:
 
-1. If `--synced` is missing, exit non-zero with a message explaining the user
-   must run the Git Agent's backlog/changelog sync first and then rerun with
+1. Validate the workspace name before touching the source path. Reject empty
+  names, path separators, `.` and `..`, reserved names `__template__` and
+  `__archive__`, and any input that would resolve outside the `Workspaces`
+  root.
+2. If `--synced` is missing, exit non-zero with a message explaining the user
+  must run the Integration Agent's backlog/changelog sync first and then rerun with
    `--synced`.
-2. Refuse to act on `__template__` or `__archive__` themselves.
 3. Discover workspace repositories (immediate subdirectories of the workspace
    containing a `.git` entry, file or directory).
 4. For each repo run `git status --porcelain`. Collect the set of dirty
@@ -541,8 +550,8 @@ Behavior:
    non-zero listing the dirty repo names and instructing the user to commit,
    stash, discard, or rerun with `--include-uncommitted`.
 5. Compute the archive destination as
-   `Workspaces/__archive__/<same-relative-path>`. If the destination already
-   exists, append `__YYYY-MM-DD_HHMMSS` to the final segment.
+  `Workspaces/__archive__/<workspace-name>`. If the destination already
+  exists, append `__YYYY-MM-DD_HHMMSS` to the workspace name.
 6. Move every non-repository child of the workspace into the destination,
    preserving structure.
 7. For each repo, perform these sub-steps **in order**:
@@ -622,7 +631,7 @@ the same dispatcher and worker correctly.
 ### 4.13 Per-workspace agent TUI welcome and idle-on-start
 
 Applies to exactly these five per-workspace agent prompts:
-`Prompts/Git Agent.md`, `Prompts/Research Agent.md`,
+`Prompts/Integration Agent.md`, `Prompts/Research Agent.md`,
 `Prompts/Planner Agent.md`, `Prompts/Worker Agent.md`,
 `Prompts/Reviewer Agent.md` (the prompts copied into every workspace by
 `Workspace - Create`). Does **not** apply to `Installation Agent.md`,
@@ -637,7 +646,7 @@ Required behavior at session start when the agent is invoked in
 - The welcome is a single short translated sentence built from this
   canonical English template:
   `Hello, I am the <Agent Name>. What would you like to do?`
-  `<Agent Name>` is the human-facing agent role name (`Git Agent`,
+  `<Agent Name>` is the human-facing agent role name (`Integration Agent`,
   `Research Agent`, `Planner Agent`, `Worker Agent`, `Reviewer Agent`)
   and is inserted verbatim. The sentence wording itself is translated
   at scaffold time per section 5.1 and reused consistently across the
@@ -742,7 +751,7 @@ Workspaces/
   Changelog.md
   __archive__/                                    (empty directory; reserved)
   __template__/
-    1. Open Git Agent                             (per-agent launcher)
+    1. Open Integration Agent                     (per-agent launcher)
     2. Open Research Agent
     3. Open Planner Agent
     4. Open Worker Agent
@@ -760,7 +769,7 @@ Workspaces/
     Research.md
     Status.md
     Prompts/
-      Git Agent.md
+      Integration Agent.md
       Planner Agent.md
       Research Agent.md
       Reviewer Agent.md
@@ -877,15 +886,19 @@ Lifecycle:
    Agent` prompt.
 3. The Workspace Agent can create a workspace, archive a workspace, or open
    per-workspace agents.
-4. Inside a workspace, agents are: Git, Research, Planner, Worker, Reviewer.
+4. Inside a workspace, agents are: Integration, Research, Planner, Worker,
+  Reviewer.
    Their prompts live in `Workspaces/__template__/Prompts/` and are copied
    per workspace during `Workspace - Create`.
+  The Integration Agent is git-first by default and adapts to configured
+  tracker and tooling integrations.
 5. Worker drives a markdown-backed task queue via `Work - Do` and
    `Work - Undo`.
 6. When work is finished, the Reviewer Agent produces a `Changelog` and `PR`
-   artifact. The Git Agent finalizes and syncs the workspace's `Backlog` and
-   `Changelog` into the global `Workspaces/Backlog.md` and
-   `Workspaces/Changelog.md`.
+  artifact. The Integration Agent performs explicit git operations on
+  request, then finalizes and syncs the workspace's `Backlog` and
+  `Changelog` into the global `Workspaces/Backlog.md` and
+  `Workspaces/Changelog.md`.
 7. `Workspace - Remove` archives the workspace under `__archive__`.
 
 ---
@@ -953,7 +966,7 @@ Create exactly these files. Do not create more, do not skip any.
 
 ### Template per-agent prompts
 
-- `Prompts/Git Agent.md`
+- `Prompts/Integration Agent.md`
 - `Prompts/Research Agent.md`
 - `Prompts/Planner Agent.md`
 - `Prompts/Worker Agent.md`
@@ -1094,7 +1107,9 @@ Guidance:
      Never volunteer `Prompts/` or `Work/` as candidates; they are
      built-in workflow directories and never repositories.
   3. **Workspace naming and branch conventions.** Ask the user how workspace
-     paths and branch names should be constructed. Rewrite
+      names and branch names should be constructed. Workspace names must be
+      single-segment identifiers under `Workspaces/`, not nested paths.
+      Rewrite
      `Workspaces/__template__/Workspace.md` so the "Workspace naming
      convention", "Branch convention", and "Repository layout" sections
      reflect the user's answers and the actual repositories from step 2.
@@ -1104,12 +1119,13 @@ Guidance:
      navigation map and the build/test/run/verify guidance. If no, leave
      the brownfield stub in place and add a follow-up entry to
      `Workspaces/__template__/Backlog.md`.
-  5. **External issue tracker.** Ask where tasks and progress are tracked
-     outside workspaces (for example Gitea, GitHub, GitLab, Jira, Linear,
-     or none). Collect the details needed so issue and ticket references
-     make sense inside the workflow, then update
-     `Workspaces/__template__/Prompts/Git Agent.md` accordingly. If none,
-     leave the "not configured" section as-is and record that fact.
+    5. **Integration profile (git + external systems).** Ask where tasks and
+      progress are tracked outside workspaces (for example Gitea, GitHub,
+      GitLab, Jira, Linear, or none). Collect the details needed so issue
+      and ticket references make sense inside the workflow, then update
+      `Workspaces/__template__/Prompts/Integration Agent.md` accordingly.
+      If none, leave the "not configured" section as-is and record that
+      fact.
   6. **Optional integrations / add-ons.** Ask the user, in free form,
      whether they want any extra workflow behavior wired in. This is the
      catch-all step for anything that does not fit the previous categories:
@@ -1180,7 +1196,7 @@ Guidance:
      - `Workspaces/__template__/Framework.md` matches the decision
        from step 4 (filled-in map or brownfield stub plus a backlog
        follow-up entry; not both, not neither).
-     - `Workspaces/__template__/Prompts/Git Agent.md` reflects the
+     - `Workspaces/__template__/Prompts/Integration Agent.md` reflects the
        step-5 tracker decision (configured details, or an explicit
        "not configured" section).
      - The integrations chosen in step 6 are reflected in the files
@@ -1241,7 +1257,7 @@ Guidance:
   step 2 (zero is valid -- the user may have said "none"); updated
   `Workspaces/__template__/Workspace.md`; updated or stubbed
   `Workspaces/__template__/Framework.md` (with a backlog note when
-  stubbed); updated `Workspaces/__template__/Prompts/Git Agent.md`;
+  stubbed); updated `Workspaces/__template__/Prompts/Integration Agent.md`;
   top-level launcher switched to `Workspace Agent`; any
   integration-related edits from step 6 applied to the existing files
   named in that step (no new files or scripts outside the section 7
@@ -1261,7 +1277,7 @@ Guidance:
     exact per-workspace launcher file via this fixed mapping (no fuzzy
     lookup). Explain which launcher you are opening and for which
     workspace:
-    - Git -> `1. Open Git Agent` launcher
+    - Integration -> `1. Open Integration Agent` launcher
     - Research -> `2. Open Research Agent` launcher
     - Planner -> `3. Open Planner Agent` launcher
     - Worker -> `4. Open Worker Agent` launcher
@@ -1277,8 +1293,9 @@ Guidance:
     before archival per below):
     1. Enumerate live workspaces: every immediate subdirectory of
        `Workspaces/` whose name is **not** `__template__` and **not**
-       `__archive__`. The `__archive__/` subtree is never read or
-       written by this procedure.
+       `__archive__`. Workspace names are single-segment by contract, so
+       recursive scanning is forbidden here. The `__archive__/` subtree is
+       never read or written by this procedure.
     2. For each live workspace, read its `Facts.md` (skip silently if
        the file is absent or empty).
     3. Produce an updated `Workspaces/__template__/Facts.md` that
@@ -1329,7 +1346,7 @@ Guidance:
 ### 8.4 `Workspaces/Backlog.md` and `Workspaces/Changelog.md`
 
 Each contains a one-line description and an "Entry format" section listing
-the fields used by the Git Agent when syncing from workspaces:
+the fields used by the Integration Agent when syncing from workspaces:
 
 - Backlog entry: Date, Workspace, Source, Follow-up.
 - Changelog entry: Date, Workspace, Scope, Outcome.
@@ -1343,13 +1360,14 @@ Guidance:
 - Structure: short description of the prompt files, work queue files, and
   core artifacts inside the workspace.
 - Workspace naming convention: short text describing how new workspace
-  paths are constructed. The scaffolder writes the generic default
-  (lowercase, path-safe, `feature/<area>/<ticket-or-scope>`); the
+  names are constructed. Workspace names are always single-segment
+  identifiers under `Workspaces/`. The scaffolder writes the generic default
+  (lowercase, path-safe, `feature-area-ticket-or-scope`); the
   Installation Agent rewrites this section with the user's actual
   convention (section 8.2 step 3).
 - Branch convention: a single shared workspace branch name used by every
   repository in the workspace (default pattern
-  `workspace/<area>/<ticket-or-scope>`).
+  `workspace/<workspace-name>`).
 - Repository layout: one bullet per configured repository directory with a
   one-line purpose. The scaffolder writes a placeholder paragraph saying
   "No repositories configured yet; the Installation Agent will fill this
@@ -1366,7 +1384,7 @@ and that scripts do not read it. Add a short example list.
 ### 8.7 Template `Backlog.md` and `Changelog.md`
 
 Per-workspace versions written from the workspace's point of view. They use
-different fields than the global files in section 8.4 because the Git Agent
+different fields than the global files in section 8.4 because the Integration Agent
 is responsible for transforming local entries into the global shape when
 syncing.
 
@@ -1375,7 +1393,7 @@ syncing.
 - Per-workspace `Changelog.md` entry format:
   `Scope`, `Key changes`, `Verification`, `Risks/follow-up`.
 
-Note in each file that the Git Agent maps these entries into the global
+Note in each file that the Integration Agent maps these entries into the global
 `Workspaces/Backlog.md` and `Workspaces/Changelog.md` (which use the
 `Date / Workspace / ...` shape from section 8.4).
 
@@ -1413,7 +1431,7 @@ Guidance: numbered plan steps, risk bullets, verification approach bullets.
 
 Headings: "Title", "Summary", "Validation", "Follow-ups".
 
-Guidance: stub bullets under each, prepared for the Git Agent to finalize.
+Guidance: stub bullets under each, prepared for the Integration Agent to finalize.
 
 ### 8.13 Template `Research.md`
 
@@ -1430,7 +1448,7 @@ Below the table, a short "Notes" section captures two rules:
 The Reviewer Agent owns updates to this file in practice, but the template
 itself does not need to spell that out.
 
-### 8.15 Template `Prompts/Git Agent.md`
+### 8.15 Template `Prompts/Integration Agent.md`
 
 Headings: "Inputs", "Typical tasks", "Rules".
 
@@ -1440,7 +1458,8 @@ Guidance:
 - Typical tasks: bring task details into `Issue`; update issue comments and
   status; prepare PR using `PR.md`; perform explicit git operations on
   request; sync workspace `Backlog` and `Changelog` into the global ones in
-  `Workspaces/`; keep a short external-tracker note in this prompt, either
+  `Workspaces/`; act as the adaptable integration surface for configured
+  trackers/systems; keep a short external-tracker note in this prompt, either
   with the configured tracker details or with an explicit "not configured"
   statement. Explain git actions in plain language first, then run the
   explicit command if the user wants it. If the user asks to open another
@@ -1776,7 +1795,10 @@ Behavior:
 ```
 def main():
     args = parse()
-    if target_exists(args.workspace): return 2
+  workspace = normalize_flat_workspace_name(args.workspace)
+  if not workspace: return 2
+  target = workspaces_root / workspace
+  if target.exists(): return 2
     create_directory(target)
     repos = immediate_subdirs_with_git(template_root)
     for repo in repos:
@@ -1813,19 +1835,21 @@ Behavior:
 ```
 def main():
     args = parse()
+  workspace = normalize_flat_workspace_name(args.workspace)
+  if not workspace: return 2
     if not args.synced:
         print_error("Refusing to archive without --synced. "
-                    "Run Git Agent sync first.")
+            "Run Integration Agent sync first.")
         return 2
-    if is_reserved(args.workspace): return 2
-    if not source_exists: return 2
+  source = workspaces_root / workspace
+  if not source.exists(): return 2
     repos = immediate_subdirs_with_git(source)
     primaries = {repo: worktree_primary_repo(repo) for repo in repos}
     dirty = [repo for repo in repos if git_status_porcelain(repo) != ""]
     if dirty and not args.include_uncommitted:
         print_error("Uncommitted changes in: " + ", ".join(r.name for r in dirty))
         return 2
-    dest = archive_root / relative_path(source)
+  dest = archive_root / workspace
     if dest exists: dest = dest.parent / (dest.name + "__" + timestamp())
     mkdir(dest)
     for child in source.children:
@@ -2349,18 +2373,18 @@ Protocol:
    section 10.4. Verify it parses.
 
 4. **Create a workspace.** Invoke
-   `Scripts/Workspace - Create --workspace rehearsal/smoke --branch
-   workspace/rehearsal/smoke`. Assert:
-   - the workspace directory exists under `Workspaces/rehearsal/smoke/`,
+  `Scripts/Workspace - Create --workspace rehearsal-smoke --branch
+  workspace/rehearsal-smoke`. Assert:
+  - the workspace directory exists under `Workspaces/rehearsal-smoke/`,
    - the three rehearsal repos are attached as worktrees on the requested branch,
    - the five per-agent launchers exist and parse,
    - the per-workspace artifacts (`Issue.md`, `Plan.md`, ..., `Work/`)
      were copied from the template.
 
 5. **Queue a synthetic task and run `Work - Do`.** Write a single
-   chunk into `Workspaces/rehearsal/smoke/Work/Next.md` (something
-   trivial, e.g. "touch a file in RehearsalA/"). Invoke
-   `Scripts/Work - Do --workspace Workspaces/rehearsal/smoke --mode cli
+  chunk into `Workspaces/rehearsal-smoke/Work/Next.md` (something
+  trivial, e.g. "touch a file in RehearsalA/"). Invoke
+  `Scripts/Work - Do --workspace Workspaces/rehearsal-smoke --mode cli
    --dry-run`. Assert:
    - the chunk moved out of `Next.md`,
    - `Current.md` contains the chunk with a valid rollback header
@@ -2376,18 +2400,18 @@ Protocol:
    `Done.md` with its rollback header intact.
 
 7. **Exercise `Work - Undo`.** Invoke
-   `Scripts/Work - Undo --workspace Workspaces/rehearsal/smoke --count
+   `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
    1`. Assert:
    - the chunk returned to `Next.md` without its rollback header,
    - each repo's `HEAD` matches the hash that was captured in the
      rollback header (preflight succeeded, reset worked).
 
 8. **Archive the workspace.** Invoke
-   `Scripts/Workspace - Remove --workspace rehearsal/smoke --synced`.
+   `Scripts/Workspace - Remove --workspace rehearsal-smoke --synced`.
    Assert:
    - the workspace directory is gone,
    - the non-repo files landed under
-     `Workspaces/__archive__/rehearsal/smoke/`,
+     `Workspaces/__archive__/rehearsal-smoke/`,
    - the three worktree pointers were removed (`git worktree list` in
      each template repo no longer mentions the rehearsal path),
    - the script refused the call earlier when `--synced` was omitted
@@ -2401,7 +2425,7 @@ Protocol:
    - `__archive__/` is empty,
    - the top-level launcher targets `Prompts/Installation Agent.md`
      again,
-   - no `rehearsal/smoke` workspace remains.
+   - no `rehearsal-smoke` workspace remains.
    After restoration, delete the snapshot directory.
 
 10. **Report.** Print a short summary listing each of steps 2-8 as PASS

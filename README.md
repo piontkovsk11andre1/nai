@@ -1,7 +1,8 @@
 # 🌾 Nai — Naive Agentic Infrastructure
 
 A 2026-style delivery workflow for AI coding agents, tightly integrated
-with git. It is not a framework you import and not a CLI you install —
+with git through an extensible Integration Agent role. It is not a
+framework you import and not a CLI you install —
 it is a small set of markdown prompts and scripts that an AI agent
 scaffolds into your project, and that you then drive yourself.
 
@@ -41,7 +42,7 @@ ends up in every file.
 
 ```mermaid
 flowchart LR
-    G[Git Agent] --> R[Research Agent]
+  G[Integration Agent] --> R[Research Agent]
     R --> P[Planner Agent]
     P --> W[Worker Agent]
     W --> V[Reviewer Agent]
@@ -103,10 +104,10 @@ Scripts/
   WorkflowLog.<ext>                 shared logging utility
   Workers/Default.<ext>             AI harness wrapper
 Workspaces/
-  Backlog.md                        global backlog (Git Agent syncs into)
-  Changelog.md                      global changelog (Git Agent syncs into)
+  Backlog.md                        global backlog (Integration Agent syncs into)
+  Changelog.md                      global changelog (Integration Agent syncs into)
   __template__/                     copied for every new workspace
-    1. Open Git Agent.<launcher>    per-agent launchers
+    1. Open Integration Agent.<launcher>    per-agent launchers
     2. Open Research Agent.<launcher>
     3. Open Planner Agent.<launcher>
     4. Open Worker Agent.<launcher>
@@ -124,7 +125,7 @@ Workspaces/
     Research.md                     research log (edited in place)
     Status.md                       Part/Expected/Current/% table
     Prompts/                        per-workspace agent prompts
-      Git Agent.md
+      Integration Agent.md
       Research Agent.md
       Planner Agent.md
       Worker Agent.md
@@ -151,7 +152,7 @@ plus its own prompts, plan, status, work queue, and a durable
 You have several equally valid entry points, pick whichever fits:
 
 - **Double-click a launcher.** A tactile, OS-native entry point into any
-  individual role: each workspace ships five launchers (Git / Research
+  individual role: each workspace ships five launchers (Integration / Research
   / Planner / Worker / Reviewer) as launcher files (`.cmd` on Windows,
   `.command` on macOS, `.desktop` on Linux), so they sit in Explorer /
   Finder / your file manager and integrate with the OS UI like any
@@ -195,7 +196,7 @@ A few things that make this different from "just prompting an agent":
   in `Work/Blocked.md`.
 - **Git-synchronized rollback.** Before each chunk runs, the `HEAD` of
   every repo in the workspace is recorded into a header attached to the
-  chunk. Ask the Worker (or Git) Agent to undo the last N steps and it
+  chunk. Ask the Worker (or Integration) Agent to undo the last N steps and it
   resets every affected repo back to its captured state and puts the
   chunks back on the queue. You can let an agent try aggressive changes
   and roll the whole thing back with one request.
@@ -214,7 +215,7 @@ A few things that make this different from "just prompting an agent":
   point at the same repos on different branches without stepping on
   each other.
 - **Archive, don't delete.** Workspaces are never wiped — when you tell
-  the Git Agent you are done, it syncs the workspace's backlog /
+  the Integration Agent you are done, it syncs the workspace's backlog /
   changelog upstream and moves the whole workspace into `__archive__/`.
 - **No remote pushes unless you ask.** The scripts never push.
 
