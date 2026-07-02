@@ -660,6 +660,69 @@ In `--mode cli` (unattended) the rule does **not** apply: the agent
 should begin acting on the prompt and the `--tail` payload immediately,
 because there is no interactive user to greet.
 
+### 4.14 Per-workspace in-chat role switching
+
+Applies only to the same five per-workspace agent prompts listed in
+section 4.13 (`Integration`, `Research`, `Planner`, `Worker`,
+`Reviewer`). It does **not** apply to `Installation Agent`,
+`Workspace Agent`, `Work - Execute`, or `Work - Verify`.
+
+Required behavior when one of these agents is running in `--mode tui`:
+
+- The agent recognizes role-switch requests in the current chat using
+  these command patterns (case-insensitive):
+  - `switch to <role>`
+  - `become <role>`
+  where `<role>` resolves to one of the five allowed role names above
+  (optionally with the word `agent`).
+- Role-name normalization is deterministic (case-insensitive, optional
+  trailing `agent`). Normalize user input to canonical role keys using
+  this table:
+  - `integration`, `integration agent` -> `Integration`
+  - `research`, `research agent` -> `Research`
+  - `planner`, `planner agent` -> `Planner`
+  - `worker`, `worker agent` -> `Worker`
+  - `reviewer`, `reviewer agent` -> `Reviewer`
+  Prompts may recognize chosen-language equivalents, but they must map
+  to these same canonical role keys before switching.
+- On a valid request, the handoff is **in-chat** and **same-session**:
+  the agent switches to the target role prompt and continues in the
+  same chat, in the same workspace, with prior conversation context
+  preserved.
+- The agent acknowledges the switch in one short line before continuing
+  under the target role behavior.
+- Mixed-intent precedence is deterministic:
+  - If one message contains exactly one valid role switch and additional
+    task instructions, switch first, then handle the remaining
+    instruction text under the target role.
+  - If one message contains more than one different switch target,
+    ask one clarification question and do not switch until resolved.
+  - If the user explicitly asks to open a separate window or names a
+    different workspace, use launcher-based opening per section 8.3
+    rather than in-chat switching.
+- Capability-mismatch handling is proactive:
+  - If the user asks for an action that is outside the current role's
+    responsibilities but clearly matches another one of the five
+    per-workspace roles, the agent should explain this briefly and offer
+    to switch in the same session.
+  - If exactly one best-fit target role is clear, offer that role in one
+    short yes/no question.
+  - If more than one target role is plausible, ask one short question
+    listing the candidate roles and wait for the user's choice before
+    switching.
+  - If the user accepts, switch in-chat per this section. If the user
+    declines, continue in the current role and provide the best in-scope
+    help available.
+- If the target role is the current role, treat it as a no-op and reply
+  with a short message that the session is already in that role.
+- If the target role is unknown, missing, or outside the allowed five,
+  refuse with a short message listing the valid targets.
+- Requests to switch to `Installation Agent`, `Workspace Agent`,
+  `Work - Execute`, or `Work - Verify` are explicitly rejected.
+
+In `--mode cli` (unattended), role switching is disabled: the prompt and
+`--tail` payload are executed as provided for that invocation.
+
 ---
 
 ## 5. Adaptation surfaces
@@ -674,6 +737,11 @@ includes:
 
 - Both translated sentences of the harness bootstrap from section 4.2
   (the "Read the file at ..." line and the tail prefix).
+- Per-workspace in-chat role-switch commands from section 4.14. Prompts
+  must recognize the chosen-language equivalents of
+  `switch to <role>` and `become <role>`.
+- Capability-mismatch switch-offer phrasing from section 4.14 (brief
+  scope explanation plus offer to switch in-chat).
 - Every heading and section label in the per-file specs of section 8.
   When section 8 lists English headings like "Goal", "Rules", "Inputs",
   "Responsibilities", "Outputs", "Notes", "Typical tasks", "Required
@@ -890,6 +958,9 @@ Lifecycle:
   Reviewer.
    Their prompts live in `Workspaces/__template__/Prompts/` and are copied
    per workspace during `Workspace - Create`.
+  In `--mode tui`, these five agents also support in-chat role switching
+  within the same workspace and same chat session (section 4.14). This
+  does not replace launcher-based opening; both flows are valid.
   The Integration Agent is git-first by default and adapts to configured
   tracker and tooling integrations.
 5. Worker drives a markdown-backed task queue via `Work - Do` and
@@ -1340,8 +1411,10 @@ Guidance:
   workspace prompts and markdown files; the global backlog/changelog files
   live in `Workspaces/Backlog.md` and `Workspaces/Changelog.md`. The same
   fixed launcher mapping is also the handoff mechanism used by every
-  per-workspace agent when the user asks to open or switch to another
-  workspace agent.
+  per-workspace agent when the user asks to **open** another workspace
+  agent window (or to jump to a different workspace). In-chat role
+  switching inside the same workspace is handled by the per-workspace
+  prompts themselves per section 4.14.
 
 ### 8.4 `Workspaces/Backlog.md` and `Workspaces/Changelog.md`
 
@@ -1462,10 +1535,16 @@ Guidance:
   trackers/systems; keep a short external-tracker note in this prompt, either
   with the configured tracker details or with an explicit "not configured"
   statement. Explain git actions in plain language first, then run the
-  explicit command if the user wants it. If the user asks to open another
-  workspace agent, resolve the exact launcher with the fixed mapping from
-  section 8.3, explain which launcher you are opening for which workspace,
-  and open it by explicit path.
+  explicit command if the user wants it. If the user asks to switch roles in
+  the same workspace using section 4.14 command patterns, switch in-chat to
+  the requested role and continue in the same session. If the user asks to
+  perform work that is outside Integration scope, offer an in-chat switch to
+  the best-fit workspace role per section 4.14 before declining. If the user
+  asks to open another workspace agent window (or names a different
+  workspace),
+  resolve the exact launcher with the fixed mapping from section 8.3, explain
+  which launcher you are opening for which workspace, and open it by
+  explicit path.
 - Rules: one question at a time, no push without explicit user request;
   resolve cross-agent handoffs against the current workspace unless the user
   names a different workspace.
@@ -1477,11 +1556,15 @@ Headings: "Required behavior", "Optional tasks".
 Guidance: mirror section 4.10. Ask for pre-context first, then ask one
 question at a time, then write `Research`. Keep the conversation focused on
 what is being investigated, what is known so far, and what will be looked at
-next. Optionally update `Backlog`. If the user asks to open another
-workspace agent, resolve the exact launcher with the fixed mapping from
-section 8.3 against the current workspace unless the user names a
-different workspace, explain which launcher you are opening for which
-workspace, and open it by explicit path.
+next. Optionally update `Backlog`. If the user asks to switch roles in the
+same workspace using section 4.14 command patterns, switch in-chat to the
+requested role and continue in the same session. If the user asks to open
+another workspace agent window (or names a different workspace), resolve the
+exact launcher with the fixed mapping from section 8.3 against the current
+workspace unless the user names a different workspace, explain which launcher
+you are opening for which workspace, and open it by explicit path.
+If the user asks for actions outside Research scope, offer an in-chat switch
+to the best-fit workspace role per section 4.14 before declining.
 
 Treat `Research.md` as a **living document, edited in place**, not as an
 append-only log:
@@ -1567,11 +1650,16 @@ Guidance:
   Keep the plan understandable at a glance: what will be done, in what
   order, and how success will be checked. Defer out-of-scope items to
   `Backlog`. Read only the minimum required files first and do not run broad
-  cross-workspace discovery. If the user asks to open another workspace
-  agent, resolve the exact launcher with the fixed mapping from section 8.3
-  against the current workspace unless the user names a different
-  workspace, explain which launcher you are opening for which workspace,
-  and open it by explicit path.
+  cross-workspace discovery. If the user asks to switch roles in the same
+  workspace using section 4.14 command patterns, switch in-chat to the
+  requested role and continue in the same session. If the user asks to open
+  another workspace agent window (or names a different workspace), resolve
+  the exact launcher with the fixed mapping from section 8.3 against the
+  current workspace unless the user names a different workspace, explain
+  which launcher you are opening for which workspace, and open it by
+  explicit path. If the user asks for actions outside Planner scope, offer
+  an in-chat switch to the best-fit workspace role per section 4.14 before
+  declining.
 
 ### 8.18 Template `Prompts/Worker Agent.md`
 
@@ -1593,11 +1681,15 @@ Guidance:
   (section 8.17). If `Work/Next` is empty when the user asks the
   Worker to start, instruct the user to run the Planner Agent first
   (or, if they explicitly ask, hand off to planning before executing).
-  If the user asks to open another workspace agent, resolve the exact
-  launcher with the fixed mapping from section 8.3 against the current
-  workspace unless the user names a different workspace, explain which
-  launcher you are opening for which workspace, and open it by explicit
-  path.
+  If the user asks to switch roles in the same workspace using section
+  4.14 command patterns, switch in-chat to the requested role and continue
+  in the same session. If the user asks to open another workspace agent
+  window (or names a different workspace), resolve the exact launcher with
+  the fixed mapping from section 8.3 against the current workspace unless
+  the user names a different workspace, explain which launcher you are
+  opening for which workspace, and open it by explicit path. If the user
+  asks for actions outside Worker scope, offer an in-chat switch to the
+  best-fit workspace role per section 4.14 before declining.
 - After each task is verified and moved to `Work/Done`, create a local git
   commit for each changed repository before starting the next task. Commit
   only after successful verification; do not batch commits across tasks; the
@@ -1630,11 +1722,16 @@ Guidance:
   `Backlog`.
 - Rules: explain gaps in plain language; keep status updates concrete and
   measurable; tell the user what is ready, what is still missing, and what
-  follow-up is recommended. If the user asks to open another workspace
-  agent, resolve the exact launcher with the fixed mapping from section 8.3
-  against the current workspace unless the user names a different
-  workspace, explain which launcher you are opening for which workspace,
-  and open it by explicit path.
+  follow-up is recommended. If the user asks to switch roles in the same
+  workspace using section 4.14 command patterns, switch in-chat to the
+  requested role and continue in the same session. If the user asks to open
+  another workspace agent window (or names a different workspace), resolve
+  the exact launcher with the fixed mapping from section 8.3 against the
+  current workspace unless the user names a different workspace, explain
+  which launcher you are opening for which workspace, and open it by
+  explicit path. If the user asks for actions outside Reviewer scope, offer
+  an in-chat switch to the best-fit workspace role per section 4.14 before
+  declining.
 
 ### 8.20 Template `Prompts/Work - Execute.md`
 
@@ -2330,6 +2427,40 @@ and report results.
 11. Post-check cleanup: remove any synthetic files and scratch workspaces
   created by verification steps 5, 8, and 10 so the tree returns to the
   post-scaffold state expected by step 0.
+
+12. In-chat role switching coverage in prompt specs: verify that all five
+  per-workspace prompts (`Integration Agent`, `Research Agent`, `Planner
+  Agent`, `Worker Agent`, `Reviewer Agent`) explicitly implement section
+  4.14 behavior for `switch to <role>` and `become <role>` in `--mode tui`.
+
+13. Role-target safety checks: verify the specs reject targets outside the
+  allowed five roles and explicitly reject `Installation Agent`,
+  `Workspace Agent`, `Work - Execute`, and `Work - Verify` as in-chat
+  switch targets.
+
+14. Same-role no-op check: verify prompt guidance defines a deterministic
+  no-op response when the user requests a switch to the current role.
+
+15. Launcher-vs-in-chat distinction check: verify each per-workspace prompt
+  distinguishes in-chat same-workspace switching (section 4.14) from
+  launcher-based opening (section 8.3) when the user asks for a separate
+  window or a different workspace.
+
+16. Role normalization check: verify prompt guidance uses one deterministic
+  normalization table (section 4.14) so case and optional `agent` suffix
+  resolve to the same canonical role keys.
+
+17. Mixed-intent precedence check: verify prompt guidance defines what to do
+  when one message contains both switching and task instructions (switch
+  first, then continue under the new role), and what to do when multiple
+  different switch targets appear in one message (ask one clarification,
+  no switch yet).
+
+18. Capability-mismatch offer check: verify prompt guidance requires the
+  current role to offer an in-chat switch when the user asks for an action
+  outside that role's responsibilities but inside another workspace role,
+  with deterministic handling for one clear target vs multiple plausible
+  targets (section 4.14).
 
 If any check fails, repair before handoff.
 

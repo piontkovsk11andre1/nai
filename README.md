@@ -65,17 +65,20 @@ flowchart LR
     W -. drives .-> Queue
 ```
 
-Five roles, each a separate AI session with its own prompt and a small
-set of input/output files. You move between them at your own pace;
-nothing is automatic across role boundaries.
+Five roles, each with its own prompt and a small set of input/output
+files. You can move between roles either by opening launchers
+(separate sessions) or by switching in-chat inside a per-workspace
+session (for example, "switch to planner" or "become reviewer"). If
+you ask a role to do something outside its scope, it should offer a
+same-session switch to a better-fit role.
 
 The flow is deliberately minimal. As models keep getting smarter, the
 scaffolding around them can shrink — Nai keeps only the few guardrails
 that still matter:
 
-- **Just enough checkpoints.** Each role is a context reset that keeps
-  the agent focused on the step in front of it instead of drifting
-  into future ones.
+- **Just enough checkpoints.** Each role is an explicit focus boundary.
+  You can switch in-chat when needed, or open a fresh role window when
+  you want a hard context reset.
 - **Order is enforced.** Role boundaries mean Research can't start
   coding and Worker can't replan.
 - **Right model for each job.** Pick a different model per role and
@@ -178,6 +181,11 @@ You have several equally valid entry points, pick whichever fits:
   come back to its own prompt. If the orchestrating session drifts,
   restart just that one and pick up where you left off; the per-role
   sessions it spawned keep their own state.
+- **In-chat role switching.** Inside any per-workspace role session,
+  ask to switch directly (for example, "switch to planner" or
+  "become worker") and continue in the same chat. If your request is
+  outside the current role's responsibilities, the agent can suggest a
+  same-session handoff to the best-fit role.
 
 That clickable role-by-role entry is intentional: it disciplines you to
 use the stages as control and confirmation points, so **your** own mistakes
@@ -194,6 +202,10 @@ A few things that make this different from "just prompting an agent":
   its own prompt that must emit `PASS` or `FAIL: <reason>` as its last
   line. Anything else is treated as blocked, with the reason recorded
   in `Work/Blocked.md`.
+- **Fast, explicit handoffs.** The five workspace roles can switch in
+  the same chat on request, so you can redirect flow without losing
+  context. The launcher-based path still exists when you want a fresh
+  separate window.
 - **Git-synchronized rollback.** Before each chunk runs, the `HEAD` of
   every repo in the workspace is recorded into a header attached to the
   chunk. Ask the Worker (or Integration) Agent to undo the last N steps and it
