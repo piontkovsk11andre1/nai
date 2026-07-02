@@ -272,22 +272,64 @@ through. Each wrapper:
   wrapper. Only those two sentences are translated; the embedded prompt
   path and the user's tail text stay verbatim.
 
-### 4.3 Work queue files
+### 4.3 Work queue directories
 
-Inside each workspace, the directory `Work/` contains exactly four files:
-`Next`, `Current`, `Blocked`, `Done` (with the markdown extension used by the
-project, normally `.md`).
+Inside each workspace, the directory `Work/` contains exactly four
+directories: `Next/`, `Current/`, `Blocked/`, `Done/`.
 
-- Each file holds zero or more chunks.
-- Chunks are separated by a line that contains exactly three hyphens: `---`.
-- Empty chunks are ignored on read.
-- Round-trip rule: read chunks, mutate, write chunks back; content of
-  unaffected chunks must not change other than trailing whitespace
-  normalization.
+- Each task is stored as a separate markdown file.
+- Canonical task-file naming is `w-0001. Short title.md`:
+  - `w-` prefix,
+  - zero-padded numeric identifier (`0001`, `0002`, ...),
+  - dot-space separator,
+  - short human-readable title,
+  - `.md` extension.
+- `Current/` holds at most one task file.
+- Selection order from `Next/` is deterministic: lexical file-name order.
+- Task movement must preserve unaffected task-file bytes.
+
+### 4.3a Task-file schema (canonical example)
+
+Task files are plain UTF-8 markdown. Only workflow metadata headers are
+machine-parsed; everything else is opaque task content.
+
+- In `Next/`, tasks normally start without metadata headers.
+- On `Next -> Current`, `Work - Move` prepends rollback header
+  (section 4.4).
+- On `Current -> Blocked`, `Work - Move` inserts blocked-reason header
+  after rollback header (section 4.4a).
+- On verifier finalization, `Work - Move` appends a verification section.
+
+Example task file as it appears in `Done/` after one verification run:
+
+```
+<!-- rollback: RepoA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa RepoB=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->
+
+# Task
+
+Implement feature X according to Plan section Y.
+
+## Acceptance Criteria
+
+- Tests pass for module X.
+- Changelog updated.
+
+## Verification Output (2026-07-02T12:34:56Z)
+
+<verifier output, verbatim>
+```
+
+Notes:
+
+- The markdown body format is a recommendation, not a parser contract.
+- The two HTML-comment headers are the only parser contract.
+- `Work - Undo` and `done -> next` reopening strip rollback/blocked headers
+  before returning the file to `Next/`.
 
 ### 4.4 Rollback metadata header
 
-When a chunk moves into `Done`, it must carry a header on its first line in
+When a task first moves from `Next/` to `Current/`, it must get a rollback
+header on its first line in
 exactly this shape:
 
 ```
@@ -296,41 +338,42 @@ exactly this shape:
 
 - Keys are workspace-relative repository directory names.
 - Values are full git commit hashes (output of `git rev-parse HEAD` at the
-  moment the task entered `Current`).
+  moment the task entered `Current/`).
 - Repos are listed in case-insensitive alphabetical order by name.
 - Whitespace: single space between tokens. Single space after the colon and
   before the closing `-->`.
 - Zero-repo workspaces (no immediate subdirectory is a git working tree)
   still get a header, in the canonical empty form
   `<!-- rollback: -->` (single space after the colon, single space before
-  the closing `-->`, no tokens between them). `Work - Undo` treats such
-  headers as a no-op for the git phase and only restores the chunk text
-  to `Next`.
+  the closing `-->`, no tokens between them).
+- The rollback header is preserved while the task is in `Current/`,
+  `Blocked/`, and `Done/`.
+- The rollback header is stripped when reopening `Done/ -> Next/` and when
+  `Work - Undo` restores tasks to `Next/`.
 
 ### 4.4a Blocked reason header
 
-When a chunk moves into `Blocked` (because the verifier reported `FAIL`,
-emitted an invalid result, or because the verifier dispatcher exited
-non-zero), `Work - Do` must record **why** directly inside the chunk so
-the user reading `Work/Blocked.md` can act on it without inspecting logs.
+When a task moves into `Blocked/` (failed verification, invalid verifier
+finalization, or verifier dispatcher failure), the workflow must record
+**why** directly inside the task file so the user can act without
+inspecting logs.
 
 Insert the blocked-reason header on the line immediately after the
 existing rollback header (which is preserved verbatim). If there is no
 rollback header for some reason, the blocked-reason header is the first
-line of the chunk. Shape:
+line of the task file. Shape:
 
 ```
 <!-- blocked: kind=<KIND> reason="<one-line reason>" -->
 ```
 
 - `<KIND>` is one of the literal ASCII tokens `FAIL`, `INVALID`, or
-  `DISPATCHER` (verifier dispatcher exited non-zero).
+  `DISPATCHER`.
 - `<one-line reason>` is a single-line human-readable explanation in
   the chosen natural language:
-  - for `FAIL`: the text after the `FAIL: ` prefix in the verifier's
-    last non-empty line, verbatim;
-  - for `INVALID`: a fixed translated sentence stating that the
-    verifier output did not end with `PASS` or `FAIL: <text>`;
+  - for `FAIL`: verifier-provided failure reason;
+  - for `INVALID`: a fixed translated sentence stating that verifier
+    finished without finalizing task movement via `Work - Move`;
   - for `DISPATCHER`: a fixed translated sentence stating that the
     verifier dispatcher exited with code `<N>`.
 - Embedded double quotes in the reason are replaced with single
@@ -340,10 +383,9 @@ line of the chunk. Shape:
 - Whitespace: single space between tokens; single space after the
   colon and before the closing `-->`.
 
-When a blocked chunk is later moved to `Current` (via
-`--blocked-action to-current`) or to `Done` (via `--blocked-action
-to-done`), strip the blocked-reason header before writing. The rollback
-header stays.
+When a blocked task is later moved out of `Blocked/` (`Blocked -> Current`
+or `Blocked -> Done`), strip the blocked-reason header before writing.
+The rollback header stays.
 
 ### 4.5 `Work - Do` state machine
 
@@ -363,32 +405,31 @@ Decision order on each invocation:
 1. If `Blocked` is non-empty:
    - If `--blocked-action` is not provided: exit non-zero with a message
      naming the two valid values and stop.
-   - If `to-current`: pop the first blocked chunk. If `Current` is non-empty,
-     exit non-zero. Otherwise write the chunk to `Current`.
-   - If `to-done`: pop the first blocked chunk, strip any blocked-reason
-     header, and append the result to `Done`.
+   - Let `<task>` be the first file in `Work/Blocked/` by lexical name.
+   - If `to-current`: invoke `Work - Move` with
+     `--from blocked --to current --task <task>`.
+   - If `to-done`: invoke `Work - Move` with
+     `--from blocked --to done --task <task>`.
    - Return after handling one blocked item.
 
 2. Else if `Current` is non-empty:
    - If `--current-action` is not provided: exit non-zero with a message
      naming the two valid values and stop.
-   - If `to-done`: move all current chunks to `Done` and stop.
+   - If `to-done`: invoke `Work - Move` with
+     `--from current --to done` and stop.
    - If `restart`: fall through to the execution step below using the existing
-     current chunk (do not recapture rollback metadata).
+     current task file (do not recapture rollback metadata).
 
 3. Else if `Current` is empty and `Next` is non-empty:
-   - Pop the first chunk from `Next`.
-   - Capture per-repo HEAD hashes by running `git rev-parse HEAD` in each
-     immediate subdirectory of the workspace that is a git working tree.
-   - Prepend the rollback header (section 4.4) to the chunk.
-   - Write it to `Current`.
+   - Let `<task>` be the first file in `Work/Next/` by lexical name.
+   - Invoke `Work - Move` with `--from next --to current --task <task>`.
    - Continue to execution. Note: this pop-and-write step runs even when
      `--dry-run` is set; the dry-run guard only skips the verifier-output
-     parsing and the final `Current -> Done` move in step 4. A dry run
-     therefore still mutates `Next` and `Current` on disk.
+     interpretation and finalization check in step 4. A dry run therefore
+     still mutates `Next/` and `Current/` on disk.
 
 4. Execution and verification:
-   - Build a tail string equal to the current chunk body (rollback header
+   - Build a tail string equal to the current task body (rollback header
      stripped).
    - Invoke the dispatcher with the execution worker, the execute prompt
      (`Prompts/Work - Execute.md` inside the workspace), the workspace path,
@@ -399,33 +440,21 @@ Decision order on each invocation:
      the verify prompt (`Prompts/Work - Verify.md` inside the workspace) and the
      same tail. The verifier dispatcher call must run with `--mode cli`
      regardless of the mode requested by the caller, because the
-     `PASS` / `FAIL: <text>` protocol requires a captured stdout that
-     a TUI harness cannot provide. Capture the verifier's **stdout** so
-     its trailing line can be inspected; stderr may be streamed live or
-     captured for replay. Replay the captured output to the user's
-     stdout/stderr after the call (streaming stdout live is also
-     acceptable as long as the verifier's last non-empty line remains
-     parseable). The executor call may use whichever mode the caller
-     requested and may stream output live.
-   - If the verifier dispatcher exits non-zero: move the current chunk to
-     `Blocked` (preserving its rollback header, adding a blocked-reason
-     header per section 4.4a with kind `DISPATCHER`) and exit with that
-     code.
-   - Otherwise parse the verifier's stdout. Take the last non-empty line.
-     - If it equals `PASS` exactly: success.
-     - If it starts with `FAIL: ` and has non-empty text after the prefix:
-       move the current chunk to `Blocked` (preserving its rollback header,
-       adding a blocked-reason header per section 4.4a with kind `FAIL`
-       and the verbatim text after `FAIL: ` as the reason) and exit with
-       code 3.
-     - Anything else is `INVALID`: same handling as `FAIL` (move to
-       `Blocked`, add a blocked-reason header with kind `INVALID`, exit
-       3) with a message that the verifier output did not end with
-       `PASS` or `FAIL: <text>`.
-   - On success: move the current chunk to `Done`, keeping its rollback
-     header. Print one short success line.
+     verifier must finalize state by invoking `Work - Move` directly.
+     The verifier call may stream output live.
+   - If the verifier dispatcher exits non-zero: invoke `Work - Move` with
+     `--from current --to blocked --reason-kind DISPATCHER --reason "..."`
+     and exit with the verifier dispatcher's code.
+   - Otherwise, in non-dry-run mode validate post-verify state:
+     - if the same task file now exists in `Work/Done/`: success;
+     - if it now exists in `Work/Blocked/`: failure, exit code 3;
+     - if it still exists in `Work/Current/`: treat as `INVALID`, invoke
+       `Work - Move` with `--from current --to blocked --reason-kind INVALID`
+       and exit 3;
+     - any other state is a precondition error and exits non-zero.
+   - On success: print one short success line.
    - When `--dry-run` is set, skip verifier-output parsing (there is no real
-     verifier result to inspect) and do not move the current chunk; the
+     verifier result to inspect) and do not enforce finalization checks; the
      dispatcher's own dry-run output is the only effect.
 
 5. Else (`Blocked`, `Current`, and `Next` all empty):
@@ -434,11 +463,64 @@ Decision order on each invocation:
 Additional context passed to the dispatcher: build the `--context-files`
 value from existing artifacts in the workspace such as
 `Issue`, `Research`, `Plan`, `Status`, `Framework`, `Notes`, `Assignments`,
-`Work/Current`, `Work/Done`. Only include files that exist. Use absolute
+task files under `Work/Current/` and `Work/Done/`. Only include files that
+exist. Use absolute
 paths. `Facts.md` is intentionally **excluded** from this list even when
 it exists: per section 8.22 it is a search-on-demand reference and must
 not be auto-attached, so agents look up only the relevant section instead
 of reading the whole file.
+
+### 4.5a `Work - Move` state machine
+
+Invoked non-interactively with these arguments:
+
+- `--workspace <path>` (optional; same default as `Work - Do`)
+- `--from next|current|blocked|done` (required)
+- `--to next|current|blocked|done` (required)
+- `--task <file-name>` (optional; required unless `--from current` and
+  exactly one file exists in `Work/Current/`)
+- `--reason-kind FAIL|INVALID|DISPATCHER` (optional; used when `--to blocked`)
+- `--reason <text>` (optional; used when `--to blocked`)
+- `--verification-output-file <path>` (optional; UTF-8 text appended to the
+  task as a verification section)
+
+Allowed transitions are exactly:
+
+- `next -> current`
+- `current -> done`
+- `current -> blocked`
+- `blocked -> current`
+- `blocked -> done`
+- `done -> next`
+
+Behavior:
+
+1. Validate source/target transition. Reject anything outside the matrix.
+2. Resolve the task file in source:
+  - if `--task` was provided, it must exist in source;
+  - if omitted for `current`, source must contain exactly one task file.
+3. Enforce destination constraints:
+  - destination `current` must be empty.
+4. Content transforms before move:
+  - `next -> current`: capture repo hashes (section 4.4) and prepend
+    rollback header if missing;
+  - `current -> blocked`: add/update blocked-reason header (section 4.4a)
+    using `--reason-kind` and `--reason` when provided;
+  - `blocked -> current` and `blocked -> done`: strip blocked-reason header;
+  - `done -> next`: strip rollback and blocked-reason headers.
+5. If `--verification-output-file` is provided, read it as UTF-8 and append
+  it to the task as a new section at EOF:
+
+  ```
+  ## Verification Output (<UTC ISO-8601 timestamp>)
+
+  <verbatim content>
+  ```
+
+6. Move the task file by renaming from source directory to destination
+  directory, preserving the file name.
+
+Exit codes: 0 success, 2 user/precondition error.
 
 ### 4.6 `Work - Undo` state machine
 
@@ -449,21 +531,22 @@ Invoked non-interactively with these arguments:
 
 Behavior:
 
-1. Read `Done` chunks. Take the last `min(N, len(done))` chunks as the undo
-   set.
+1. Read task files from `Work/Done/`. Sort by completion chronology:
+  primary key file modified time (oldest to newest), tie-breaker lexical
+  file name. Take the last `min(N, len(done))` tasks as the undo set.
 2. Preflight: for every rollback entry across the undo set, verify the target
    commit exists in the corresponding repository. If any check fails, exit
    non-zero before making any changes.
 3. For each affected repository, run `git reset --hard <commit>` then
-   `git clean -fdx`. When more than one chunk in the undo set references
+  `git clean -fdx`. When more than one task in the undo set references
    the same repository, use the **oldest** captured hash (the rollback
-   header of the earliest chunk in the undo set, i.e. the deepest point
+  header of the earliest task in the undo set, i.e. the deepest point
    in history) so the working tree returns to the state that existed
-   before the first undone chunk. Stop on first repo failure with a
+  before the first undone task. Stop on first repo failure with a
    non-zero exit; do not try to recover, but report which repo and what
    failed.
-4. Strip rollback headers from the undo set and prepend them to the top of
-   `Next` in their original order. Write `Done` without the undone chunks.
+4. For each undone task, strip rollback and blocked-reason headers and move
+  the file to `Work/Next/` in original order.
 
 Destructive intent is by design: dirty working trees are erased.
 
@@ -609,7 +692,7 @@ The Research Agent prompt must instruct the agent to:
 - Execute prompt: `Prompts/Work - Execute.md` inside the workspace.
 - Verify prompt: `Prompts/Work - Verify.md` inside the workspace.
 - `Facts.md` is **not** added to the dispatcher's `--context-files`
-  even when present (see section 4.5). The Execute and Verify prompts
+  even when present (see sections 4.5 and 4.5a). The Execute and Verify prompts
   are aware of it and may consult it on demand by searching for the
   relevant section title.
 
@@ -760,27 +843,23 @@ includes:
 Protocol literals that are **not translated** under any circumstances
 (they are machine-parsed tokens, not user-facing prose):
 
-- The verifier output tokens `PASS` and the `FAIL: ` prefix from
-  section 4.5 / section 8.21. The free-text explanation after `FAIL: `
-  is in the chosen language, but the prefix itself is the literal ASCII
-  string `FAIL: ` (uppercase F-A-I-L, colon, single space).
 - The rollback header marker `<!-- rollback: ... -->` from section 4.4
   and the blocked-reason header marker `<!-- blocked: ... -->` from
   section 4.4a. Keys and structure are fixed ASCII; only the embedded
   free-text reason value is in the chosen language.
-- The chunk separator line `---` from section 4.3.
 - Dispatcher / worker / `Work - *` CLI flag names (`--prompt`, `--mode`,
-  `--workspace`, `--blocked-action to-current|to-done`, etc.). Their
+  `--workspace`, `--from`, `--to`, `--blocked-action to-current|to-done`,
+  etc.). Their
   *help text* is translated; the flag names and enum values stay
   ASCII.
 - Log event identifiers from section 9.7 (`work-do.start`,
   `work-do.blocked`, etc.).
 
 When producing the per-file specs in section 8 (especially
-`Prompts/Work - Verify.md`), the verifier-output rule must read the same
-way in every language: the last non-empty line is `PASS` or
-`FAIL: <one-line reason>`, where `PASS` and `FAIL:` are literal ASCII
-tokens that must not be localized.
+`Prompts/Work - Verify.md`), the finalization rule must read the same
+way in every language: verifier completion must happen through
+`Work - Move`, and `Work - Move` appends the verification output section
+to the task file in both success and failure paths.
 
 File and directory names follow the separate rule in section 5.2.
 
@@ -810,6 +889,7 @@ Scripts/
   Workspace - Create.<ext>
   Workspace - Remove.<ext>
   Work - Do.<ext>
+  Work - Move.<ext>
   Work - Undo.<ext>
   Logger.<ext>                                    (shared logging utility, section 9.7)
   Workers/
@@ -845,10 +925,10 @@ Workspaces/
       Work - Execute.md
       Work - Verify.md
     Work/
-      Blocked.md
-      Current.md
-      Done.md
-      Next.md
+      Blocked/
+      Current/
+      Done/
+      Next/
 ```
 
 `<ext>` matches the chosen programming language (`.py`, `.sh`, `.js`, `.go`,
@@ -963,8 +1043,8 @@ Lifecycle:
   does not replace launcher-based opening; both flows are valid.
   The Integration Agent is git-first by default and adapts to configured
   tracker and tooling integrations.
-5. Worker drives a markdown-backed task queue via `Work - Do` and
-   `Work - Undo`.
+5. Worker drives a file-backed task queue via `Work - Do`,
+  `Work - Move`, and `Work - Undo`.
 6. When work is finished, the Reviewer Agent produces a `Changelog` and `PR`
   artifact. The Integration Agent performs explicit git operations on
   request, then finalizes and syncs the workspace's `Backlog` and
@@ -999,6 +1079,7 @@ Create exactly these files. Do not create more, do not skip any.
 - `Scripts/Workspace - Create.<ext>` - section 4.7 and 9.2.
 - `Scripts/Workspace - Remove.<ext>` - section 4.8 and 9.3.
 - `Scripts/Work - Do.<ext>` - section 4.5 and 9.4.
+- `Scripts/Work - Move.<ext>` - section 4.5a and 9.5a.
 - `Scripts/Work - Undo.<ext>` - section 4.6 and 9.5.
 - `Scripts/Workers/Default.<ext>` - worker wrapper for the chosen harness in
   CLI and TUI modes (section 4.2, 9.6, and 11).
@@ -1047,10 +1128,10 @@ Create exactly these files. Do not create more, do not skip any.
 
 ### Template work queue
 
-- `Work/Next.md`
-- `Work/Current.md`
-- `Work/Blocked.md`
-- `Work/Done.md`
+- `Work/Next/`
+- `Work/Current/`
+- `Work/Blocked/`
+- `Work/Done/`
 
 ### Template per-agent launchers
 
@@ -1086,7 +1167,8 @@ in any order:
 - The launcher lifecycle (first run uses `Installation Agent`, subsequent
   runs use `Workspace Agent`).
 - The dispatcher contract (the canonical flags of `Scripts/Agent.<ext>`).
-- The work-queue file set and chunk separator.
+- The work-queue directory set (`Next/`, `Current/`, `Blocked/`, `Done/`) and
+  task-file naming convention.
 - The typical end-to-end flow that mirrors section 6.
 - A short safety note: workspace removal is archive-only, no remote push
   without explicit user request.
@@ -1592,14 +1674,14 @@ Headings: "Inputs", "Outputs", "Interview flow", "Existing plan policy",
 
 Guidance:
 - Inputs: `Issue`, `Research`, `Notes`, `Changelog`, `Framework`,
-  `Work/Next` (to see what is already queued). `Facts.md` exists in the
+  `Work/Next/` (to see what is already queued). `Facts.md` exists in the
   workspace and is **searched on demand only** -- never read end-to-end
   and never preloaded. Before asking the user any question, search
   `Facts.md` for a matching `## <Title>` section by keyword; if a
   relevant section exists, treat its body as authoritative and skip
   that question.
 - Outputs: `Plan`, `Status` (with the columns from section 4.9),
-  `Work/Next` (the initial set of actionable chunks derived from the
+  `Work/Next/` (the initial set of actionable task files derived from the
   plan), and **appended sections** in `Facts.md` recording confirmed
   durable answers from the interview (see "Interview flow" below).
 - Interview flow (applies when the user invokes the Planner without
@@ -1633,18 +1715,19 @@ Guidance:
     and continue with discussion/review only.
   - Always confirm intent before replacing an existing plan wholesale.
 - Work queue seeding:
-  - After the `Plan` is in a stable state, derive actionable chunks
-    into `Work/Next` (chunks separated by the literal line `---` per
-    section 4.3). Each chunk should be a single, self-contained unit
+  - After the `Plan` is in a stable state, derive actionable task files
+    into `Work/Next/` (section 4.3 naming convention). Each task should be
+    a single, self-contained unit
     of execution scoped tightly enough that a Worker can act on it
     without further planning.
-  - If `Work/Next` already has actionable blocks, do not regenerate
+  - If `Work/Next/` already has actionable task files, do not regenerate
     them unless the user explicitly asks; offer to append additional
-    chunks instead.
-  - If `Work/Next` is empty, create initial actionable chunks
+    tasks instead.
+  - If `Work/Next/` is empty, create initial actionable task files
     immediately once the plan is stable.
-  - Do not write to `Work/Current`, `Work/Blocked`, or `Work/Done`;
-    those files are owned by `Work - Do` / `Work - Undo` (Worker
+  - Do not write to `Work/Current/`, `Work/Blocked/`, or `Work/Done/`;
+    those directories are owned by `Work - Do` / `Work - Move` /
+    `Work - Undo` (Worker
     Agent).
 - Notes: `Research` may say "No research" and planning still proceeds.
   Keep the plan understandable at a glance: what will be done, in what
@@ -1667,18 +1750,18 @@ Headings: "Inputs", "Responsibilities", "Rules".
 
 Guidance:
 - Inputs: `Plan`, `Issue`, `Notes`, `Changelog`, `Research`, `Status`,
-  `Framework`, `Assignments`, `Work/Next`. `Facts.md` exists in the
+  `Framework`, `Assignments`, `Work/Next/`. `Facts.md` exists in the
   workspace and is **searched on demand only** -- never read end-to-end
   and never preloaded. When a question about project conventions or
   prior decisions comes up, search `Facts.md` for a matching
   `## <Title>` section by keyword and read only that section.
 - Responsibilities: invoke `Work - Do`; resolve `Blocked`/`Current`
-  decisions via explicit CLI arguments; invoke `Work - Undo` when
+  decisions via explicit CLI arguments and `Work - Move`; invoke `Work - Undo` when
   rollback is requested; refine work toward 100% in `Status` or
   propose backlog items; when the user asks to run all work, process
   tasks sequentially one by one. The Worker does **not** seed
-  `Work/Next` -- that is the Planner Agent's responsibility
-  (section 8.17). If `Work/Next` is empty when the user asks the
+  `Work/Next/` -- that is the Planner Agent's responsibility
+  (section 8.17). If `Work/Next/` is empty when the user asks the
   Worker to start, instruct the user to run the Planner Agent first
   (or, if they explicitly ask, hand off to planning before executing).
   If the user asks to switch roles in the same workspace using section
@@ -1690,10 +1773,10 @@ Guidance:
   opening for which workspace, and open it by explicit path. If the user
   asks for actions outside Worker scope, offer an in-chat switch to the
   best-fit workspace role per section 4.14 before declining.
-- After each task is verified and moved to `Work/Done`, create a local git
+- After each task is verified and moved to `Work/Done/`, create a local git
   commit for each changed repository before starting the next task. Commit
   only after successful verification; do not batch commits across tasks; the
-  commit message references the completed task block intent; never push
+  commit message references the completed task intent; never push
   unless the user explicitly asks.
 - When a durable, reusable fact is confirmed by the user during
   execution (a project convention, a decision, an environment detail
@@ -1704,11 +1787,11 @@ Guidance:
 - Rules: one question at a time when clarifying; keep operations explicit
   and script-driven; workflow scripts live at workflow root `Scripts/`, not
   inside workspace directories (never propose creating `Work - Do` or
-  `Work - Undo` inside a workspace); if the session starts in a workspace
+  `Work - Move` or `Work - Undo` inside a workspace); if the session starts in a workspace
   folder, locate the root scripts by walking upward to the directory that
-  contains `Scripts/Work - Do.<ext>`; treat `Plan` and `Work/Next` as
-  input, not output (do not edit `Plan` or seed/regenerate `Work/Next`
-  unless the user explicitly asks -- the canonical path for new chunks
+  contains `Scripts/Work - Do.<ext>`; treat `Plan` and `Work/Next/` as
+  input, not output (do not edit `Plan` or seed/regenerate `Work/Next/`
+  unless the user explicitly asks -- the canonical path for new tasks
   is through the Planner Agent). Keep status updates practical: what was
   done, what remains, and what decision is needed next.
 
@@ -1717,7 +1800,7 @@ Guidance:
 Headings: "Inputs", "Outputs", "Rules".
 
 Guidance:
-- Inputs: `Plan`, `Issue`, `Status`, `Work/Done`, repository changes.
+- Inputs: `Plan`, `Issue`, `Status`, `Work/Done/`, repository changes.
 - Outputs: `Changelog`, `PR`, optional updates to `Status`, `Notes`,
   `Backlog`.
 - Rules: explain gaps in plain language; keep status updates concrete and
@@ -1738,13 +1821,13 @@ Guidance:
 Headings: "Inputs", "Required behavior", "Output expectation".
 
 Guidance:
-- Inputs: the current work chunk and the artifacts listed in section 4.5.
+- Inputs: the current task file and the artifacts listed in section 4.5.
   `Facts.md` exists in the workspace but is **not auto-attached** to the
   dispatcher's `--context-files`; when a relevant project convention or
   prior decision is needed, search `Facts.md` for a matching
   `## <Title>` section by keyword and read only that section.
 - Required behavior:
-  - apply changes scoped to the active chunk's intent;
+  - apply changes scoped to the active task's intent;
   - report what was changed and what remains;
   - do not update workflow coordination files. Treat the following as
     read-only context during execution: `Status`, `Plan`, `Research`,
@@ -1761,20 +1844,18 @@ Guidance:
 - Inputs: same as Execute. `Facts.md` is likewise present but not
   auto-attached; search by section title for any convention or decision
   needed to judge whether the change is acceptable.
-- Required behavior: validate that execution matches chunk intent; run
+- Required behavior: validate that execution matches task intent; run
   verification steps relevant to the change.
-- Output expectation: the last non-empty line of the verifier's output must
-  be exactly `PASS` when the work is acceptable for moving to `Done`, or
-  exactly `FAIL: <one-line explanation>` otherwise. `PASS` and the `FAIL: `
-  prefix are literal ASCII protocol tokens and must not be translated
-  (see section 5.1); only the free-text explanation after `FAIL: ` is in
-  the chosen language. `Work - Do` parses that line; anything else is
-  treated as an invalid verifier result and routed the same way as `FAIL`
-  (see section 4.5). When the verifier reports `FAIL` (or produces an
-  invalid result), `Work - Do` records the reason inside the chunk via
-  the blocked-reason header from section 4.4a, so the user can read
-  `Work/Blocked.md` and immediately see why each chunk is there without
-  consulting logs.
+- Finalization requirement: the verifier must finalize task state through
+  `Work - Move` and must not move files directly. Exactly one of the
+  following calls is required:
+  - success: `current -> done`;
+  - failure: `current -> blocked` with `--reason-kind FAIL` and a clear
+    one-line reason.
+  In both paths, the verifier passes `--verification-output-file` so the
+  full verification output is appended to the task file.
+- Output expectation: verifier prose is free-form and human-readable.
+  `Work - Do` does not parse protocol tokens from verifier output.
 
 ### 8.22 Template `Facts.md`
 
@@ -1835,13 +1916,14 @@ the append-only `## <Title>` format, and the search-only read rule,
 plus one example `## Example fact` section the user can replace or
 delete.
 
-### 8.23 Template `Work/Next.md`, `Work/Current.md`, `Work/Blocked.md`, `Work/Done.md`
+### 8.23 Template `Work/Next/`, `Work/Current/`, `Work/Blocked/`, `Work/Done/`
 
-All four work-queue files in the template are empty files. They exist so the
-workspace structure is complete on copy, but they carry no instructional
-text or example content. The chunk format (section 4.3) and rollback header
-format (section 4.4) are the authoritative reference; do not duplicate them
-into these files.
+All four work-queue directories in the template are created empty. They exist
+so the workspace structure is complete on copy, but they carry no
+instructional text or example content. The task-file format (section 4.3),
+rollback header format (section 4.4), and blocked-reason header format
+(section 4.4a) are the authoritative reference; do not duplicate those rules
+inside queue files.
 
 ---
 
@@ -1986,58 +2068,33 @@ propagate git failures from worktree removal.
 
 Inputs: as in section 4.5.
 
-Behavior follows the decision order in section 4.5 step by step. Provide a
-chunk parser that:
+Behavior follows section 4.5 step by step and uses `Work - Move` for all
+queue transitions instead of directly editing queue state files.
 
-- Reads text as UTF-8.
-- Splits on lines equal to `---` after stripping trailing whitespace.
-- Strips each chunk's surrounding whitespace.
-- Filters out empty chunks.
+Implementation requirements:
 
-Writer:
-
-- Joins chunks with `\n---\n\n`.
-- Ends file with a single trailing newline.
-- Writes an empty file when the list is empty.
-
-Rollback header helpers:
-
-- `parse_header(chunk)` returns `(mapping, body_without_header)`.
-- `add_header(chunk, mapping)` merges mapping with any existing one, sorts
-  keys case-insensitively, and produces the exact line from section 4.4.
-
-Dispatcher invocation: spawn the interpreter on `Scripts/Agent.<ext>` with
-the canonical arguments. Build `--context-files` from the existing workspace
-artifacts listed in section 4.5. **Never include `Facts.md`** in this
-list even when the file exists; Facts is a search-on-demand reference
-(see section 8.22). The verifier dispatcher call is always
-made with `--mode cli` (regardless of the mode the caller of `Work - Do`
-requested) and captures its stdout so the trailing `PASS` / `FAIL: <text>`
-line can be parsed; stderr may be streamed live. The executor call uses
-the caller's requested mode and may stream output live.
+- Discover task files in queue directories by lexical file-name order.
+- Read/write task files as UTF-8.
+- Use rollback-header helpers compatible with section 4.4.
+- Build `--context-files` from existing workspace artifacts listed in
+  section 4.5. **Never include `Facts.md`** in this list even when the
+  file exists; Facts is a search-on-demand reference (section 8.22).
+- Verifier dispatcher call is always `--mode cli`.
 
 Verification outcome handling:
 
-- Dispatcher non-zero exit on the verifier call -> move current chunk to
-  `Blocked` (rollback header preserved, blocked-reason header added with
-  kind `DISPATCHER`) and return the dispatcher's exit code.
-- Verifier stdout last non-empty line equals `PASS` -> move current chunk
-  to `Done` (rollback header preserved).
-- Last non-empty line starts with `FAIL: ` and has non-empty text after the
-  prefix -> move current chunk to `Blocked` (rollback header preserved,
-  blocked-reason header added with kind `FAIL` and the verbatim text after
-  `FAIL: ` as the reason) and return exit code 3.
-- Anything else (no output, missing prefix, empty FAIL text, etc.) is
-  treated as `INVALID` -> move to `Blocked` (rollback header preserved,
-  blocked-reason header added with kind `INVALID`) and return exit code 3
-  with a message that the verifier output did not end with `PASS` or
-  `FAIL: <text>`.
+- Verifier dispatcher non-zero -> invoke `Work - Move` from `current`
+  to `blocked` with kind `DISPATCHER` and return that exit code.
+- Verifier dispatcher zero in non-dry-run mode -> verify that the active
+  task was finalized by verifier through `Work - Move`:
+  - task in `Done/` -> success;
+  - task in `Blocked/` -> return 3;
+  - task still in `Current/` -> invoke `Work - Move` with kind `INVALID`
+    and return 3;
+  - anything else -> precondition error.
 
-The blocked-reason header is stripped again when a blocked chunk is
-moved out (to `Current` or `Done`); see section 4.4a.
-
-Exit codes: 0 success, 2 user/precondition error, 3 verification
-FAIL/INVALID, dispatcher's exit code on worker failure.
+Exit codes: 0 success, 2 user/precondition error, 3 verification failure,
+dispatcher's exit code on worker failure.
 
 ### 9.5 `Work - Undo`
 
@@ -2048,10 +2105,72 @@ Behavior follows section 4.6 step by step. Provide:
 - `git_commit_exists(repo, hash)` via `git cat-file -e <hash>^{commit}`.
 - `git_reset_hard(repo, hash)` via `git reset --hard <hash>`.
 - `git_clean_fdx(repo)` via `git clean -fdx`.
-- Strip header before writing chunks back to `Next`.
+- Sort `Done/` task files by completion chronology rule from section 4.6.
+- Strip rollback/blocked headers before moving undone task files back to
+  `Next/`.
 
 Exit codes: 0 success, 2 user/precondition error including preflight
 failures.
+
+### 9.5a `Work - Move`
+
+Inputs: as in section 4.5a.
+
+Behavior:
+
+```
+def main():
+  args = parse()
+  ws = resolve_workspace(args.workspace)
+  validate_transition(args.from_state, args.to_state)
+  task = resolve_source_task(ws, args.from_state, args.task)
+  ensure_destination_constraints(ws, args.to_state)
+
+  text = read_utf8(task)
+  if args.from_state == "next" and args.to_state == "current":
+    text = ensure_rollback_header(text, capture_repo_heads(ws))
+  if args.to_state == "blocked":
+    text = upsert_blocked_reason(text, args.reason_kind, args.reason)
+  if args.from_state == "blocked" and args.to_state in ("current", "done"):
+    text = strip_blocked_reason(text)
+  if args.from_state == "done" and args.to_state == "next":
+    text = strip_blocked_reason(strip_rollback_header(text))
+  if args.verification_output_file:
+    out = read_utf8(args.verification_output_file)
+    text = append_verification_section(text, out, utc_timestamp())
+
+  write_utf8(task, text)
+  move(task, queue_dir(ws, args.to_state) / task.name)
+  return 0
+```
+
+Exit codes: 0 success, 2 user/precondition error.
+
+Canonical invocation examples (paths shown as relative for readability):
+
+- Start next task:
+
+  ```
+  Scripts/Work - Move --workspace Workspaces/my-ws --from next --to current --task "w-0007. API retry policy.md"
+  ```
+
+- Finalize verification success and append verifier output:
+
+  ```
+  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to done --verification-output-file Workspaces/my-ws/.tmp/verify.txt
+  ```
+
+- Finalize verification failure with explicit reason:
+
+  ```
+  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation"
+  ```
+
+- Reopen completed task:
+
+  ```
+  Scripts/Work - Move --workspace Workspaces/my-ws --from done --to next --task "w-0007. API retry policy.md"
+  ```
 
 ### 9.6 `Workers/Default`
 
@@ -2356,10 +2475,10 @@ and report results.
 
 0. **Cleanup pass.** Before running the remaining checks, walk the entire
    workflow root and delete every file or directory that is not part of
-  the file manifest in section 7 and was created by scaffolding,
-  verification, or rehearsal. Preserve any pre-existing user workspaces
-  under `Workspaces/` other than throwaway rehearsal paths created by this
-  run. This explicitly includes:
+    the file manifest in section 7 and was created by scaffolding,
+    verification, or rehearsal. Preserve any pre-existing user workspaces
+    under `Workspaces/` other than throwaway rehearsal paths created by this
+    run. This explicitly includes:
    - any scratch or test files you created while writing or verifying
      scripts (e.g. `test_*.py`, `tmp.md`, sample inputs, throwaway
      `Workspaces/<name>/` directories used to dry-run create/remove);
@@ -2368,10 +2487,10 @@ and report results.
    - any extra documentation files you produced beyond the manifest
      (summaries, change notes, READMEs inside subdirectories);
    - any partially generated files left over from aborted attempts.
-   The only exceptions are: this `INSTALL.md` (consumed input), and the
-   files explicitly listed in section 7. The four template
-   `Work/*.md` files and the empty `Workspaces/__archive__/` directory
-   are part of the manifest and must remain. The `Workspaces/__template__/`
+    The only exceptions are: this `INSTALL.md` (consumed input), and the
+    files explicitly listed in section 7. The four template
+    `Work/*/` queue directories and the empty `Workspaces/__archive__/` directory
+    are part of the manifest and must remain. The `Workspaces/__template__/`
    directory itself ships with no repository directories; any
    `Configuration/`, `Documentation/`, `Implementation/`, or other
    repo directories the rehearsal (section 13.5) or a previous aborted
@@ -2380,36 +2499,37 @@ and report results.
    match section 7 exactly, with no extra scaffolder-created artifacts.
 
 1. Every file from section 7 exists. Every manifest file that is specified
-   to carry content must be non-empty; the four template `Work/*.md` queue
-   files may be zero-byte by design.
+    to carry content must be non-empty; the four template queue directories
+  must exist.
 2. All generated scripts are syntactically valid (compile, parse, or
    lint depending on the language).
 3. Dispatcher dry-run with the Installation Agent prompt prints a valid
    harness command. Example: invoke the dispatcher with
    `--worker Default --prompt <abs Installation Agent path> --mode cli --dry-run`.
 4. Each per-agent launcher has the expected content and working-directory
-  semantics per section 10. On Windows with Python launchers, validate that
-  each `.cmd` file resolves Python in this order: `py` on `PATH`, then
-  `python` on `PATH`, then `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`,
-  and that it invokes the dispatcher without hardcoding a user-profile
-  absolute path.
-5. `Work - Do` chunk parser round-trip: feed the parser a synthetic input
-   already in the writer's canonical form (two non-empty chunks joined by
-   `\n---\n\n`, ending with a single trailing newline), write it back via
-   the writer, and confirm the output is byte-equivalent to the input.
-   Non-canonical inputs are expected to be normalized by the writer
-   (separator spacing, trailing whitespace) and are not part of this
-   round-trip check. (The template `Work/*.md` files are empty by design
-   and are not used for this check.)
+   semantics per section 10. On Windows with Python launchers, validate that
+   each `.cmd` file resolves Python in this order: `py` on `PATH`, then
+   `python` on `PATH`, then `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`,
+   and that it invokes the dispatcher without hardcoding a user-profile
+   absolute path.
+5. `Work - Move` transition matrix check: in a scratch workspace create
+   synthetic task files and verify each allowed transition from section
+   4.5a succeeds, each disallowed transition fails, `Current/` singleton
+   enforcement works, and header transforms (rollback/blocked-reason
+   add/strip) match sections 4.4 and 4.4a.
 6. `Workspace - Remove` refuses to run without `--synced`.
 7. `Work - Do` refuses to run when `Blocked` or `Current` is non-empty
    without the matching action flag.
+   - Verifier finalization check: in a scratch workspace with one active task,
+     run one success path and one failure path through verifier-driven
+     finalization and confirm both resulting task files contain an appended
+     `Verification Output` section, with failures ending in `Work/Blocked/`.
 8. End-to-end UTF-8: when the chosen natural language uses non-ASCII
    characters, run the dispatcher in `--dry-run` against the Installation
    Agent prompt and confirm the printed harness command, including the
    translated bootstrap sentence, appears correctly (no mojibake, no
    `UnicodeEncodeError`). Also append a non-ASCII test line via
-  `Logger` to a scratch workspace and confirm the resulting
+    `Logger` to a scratch workspace and confirm the resulting
    `log.txt` reads back as UTF-8.
 
 9. `Workspaces/__template__/Facts.md` exists and is non-empty, contains
@@ -2504,36 +2624,48 @@ Protocol:
    section 10.4. Verify it parses.
 
 4. **Create a workspace.** Invoke
-  `Scripts/Workspace - Create --workspace rehearsal-smoke --branch
-  workspace/rehearsal-smoke`. Assert:
-  - the workspace directory exists under `Workspaces/rehearsal-smoke/`,
+   `Scripts/Workspace - Create --workspace rehearsal-smoke --branch
+   workspace/rehearsal-smoke`. Assert:
+   - the workspace directory exists under `Workspaces/rehearsal-smoke/`,
    - the three rehearsal repos are attached as worktrees on the requested branch,
    - the five per-agent launchers exist and parse,
    - the per-workspace artifacts (`Issue.md`, `Plan.md`, ..., `Work/`)
      were copied from the template.
 
-5. **Queue a synthetic task and run `Work - Do`.** Write a single
-  chunk into `Workspaces/rehearsal-smoke/Work/Next.md` (something
-  trivial, e.g. "touch a file in RehearsalA/"). Invoke
-  `Scripts/Work - Do --workspace Workspaces/rehearsal-smoke --mode cli
+5. **Queue a synthetic task and run `Work - Do`.** Write a single task file
+   `Workspaces/rehearsal-smoke/Work/Next/w-0001. Rehearsal task.md`
+   (something trivial, e.g. "touch a file in RehearsalA/"). Invoke
+   `Scripts/Work - Do --workspace Workspaces/rehearsal-smoke --mode cli
    --dry-run`. Assert:
-   - the chunk moved out of `Next.md`,
-   - `Current.md` contains the chunk with a valid rollback header
+   - the task file moved out of `Work/Next/`,
+   - `Work/Current/` contains the task file with a valid rollback header
      (section 4.4) carrying real commit hashes from the three rehearsal repos,
    - the dispatcher was invoked with the execute prompt and the verify
      prompt (both as dry runs),
-   - because `--dry-run` was set, the chunk stayed in `Current.md` per
-     section 4.5 step 4 (skip verifier-output parsing; do not move the
-     current chunk).
+   - because `--dry-run` was set, the task stayed in `Work/Current/` per
+     section 4.5 step 4.
 
-6. **Exercise `--current-action to-done`.** Re-invoke `Work - Do` with
-   `--current-action to-done`. Assert the chunk now lives in
-   `Done.md` with its rollback header intact.
+   Additional non-dry-run assertions:
+   - Run one non-dry-run verification success path and assert it moves the
+     task to `Work/Done/` and appends a `Verification Output` section.
+   - Invoke `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count 1`
+     so the task returns to `Work/Next/`.
+   - Run one non-dry-run verification failure path and assert it moves the
+     task to `Work/Blocked/`, appends a `Verification Output` section,
+     and adds a blocked-reason header.
+   - Invoke `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from blocked --to done`
+     so the task is in `Work/Done/` for the explicit undo exercise below.
+
+6. **Exercise `--current-action to-done`.** Move the task back to
+   `Work/Current/` (for example via `Work - Move --from done --to next`
+   followed by `Work - Move --from next --to current`), then re-invoke
+   `Work - Do` with `--current-action to-done`. Assert the task now lives
+   in `Work/Done/` with its rollback header intact.
 
 7. **Exercise `Work - Undo`.** Invoke
    `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
    1`. Assert:
-   - the chunk returned to `Next.md` without its rollback header,
+   - the task returned to `Work/Next/` without its rollback header,
    - each repo's `HEAD` matches the hash that was captured in the
      rollback header (preflight succeeded, reset worked).
 
@@ -2597,9 +2729,10 @@ one-line PASS/FAIL summary. Do not push anything to any remote. Stop.
 - **Tail** - optional user-provided text appended to the bootstrap with a
   fixed prefix.
 - **Mode** - `cli` (unattended) or `tui` (interactive).
-- **Chunk** - a block of text in a `Work/*.md` queue file separated by lines
-  of `---`.
-- **Rollback header** - a single HTML-comment line at the top of a `Done`
-  chunk that records per-repository commit hashes for safe rollback.
+- **Task file** - one markdown file representing one unit of work in one of
+  `Work/Next/`, `Work/Current/`, `Work/Blocked/`, or `Work/Done/`.
+- **Rollback header** - a single HTML-comment line at the top of a task file
+  (captured on `Next -> Current`) that records per-repository commit hashes
+  for safe rollback.
 - **Workspace branch** - the git branch name shared by all repositories of a
   workspace, used as the branch for every worktree.

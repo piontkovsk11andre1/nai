@@ -55,11 +55,13 @@ flowchart LR
             direction LR
             E[Execute] --> Vf{Verify}
         end
+      M[Work - Move]
         D[Done]
         B[Blocked]
         N --> E
-        Vf -- PASS --> D
-        Vf -- "FAIL: reason" --> B
+      Vf --> M
+      M --> D
+      M --> B
     end
 
     W -. drives .-> Queue
@@ -84,7 +86,7 @@ that still matter:
 - **Right model for each job.** Pick a different model per role and
   per task type — a cheap fast one for Execute, a stricter one for
   Verify, a long-context one for Planner.
-- **Early verification.** Every chunk is checked the moment it lands,
+- **Early verification.** Every task is checked the moment it lands,
   so a mistake gets caught before it tangles with the next three.
 
 ---
@@ -103,6 +105,7 @@ Scripts/
   Workspace - Create.<ext>
   Workspace - Remove.<ext>
   Work - Do.<ext>
+  Work - Move.<ext>
   Work - Undo.<ext>
   Logger.<ext>                      shared logging utility
   Workers/Default.<ext>             AI harness wrapper
@@ -135,11 +138,11 @@ Workspaces/
       Reviewer Agent.md
       Work - Execute.md
       Work - Verify.md
-    Work/                           markdown-backed task queue
-      Next.md
-      Current.md
-      Blocked.md
-      Done.md
+    Work/                           file-backed task queue
+      Next/
+      Current/
+      Blocked/
+      Done/
   __archive__/                      finished workspaces land here
 ```
 
@@ -199,18 +202,19 @@ review and correction, the work can drift away from the target.
 A few things that make this different from "just prompting an agent":
 
 - **Hard execute/verify loop.** Verification is a separate session with
-  its own prompt that must emit `PASS` or `FAIL: <reason>` as its last
-  line. Anything else is treated as blocked, with the reason recorded
-  in `Work/Blocked.md`.
+  its own prompt, and finalization happens through `Work - Move`.
+  Successful verification moves the active task to `Done`, failed
+  verification moves it to `Blocked`, and verification output is
+  appended into the task file in both cases.
 - **Fast, explicit handoffs.** The five workspace roles can switch in
   the same chat on request, so you can redirect flow without losing
   context. The launcher-based path still exists when you want a fresh
   separate window.
-- **Git-synchronized rollback.** Before each chunk runs, the `HEAD` of
+- **Git-synchronized rollback.** Before each task runs, the `HEAD` of
   every repo in the workspace is recorded into a header attached to the
-  chunk. Ask the Worker (or Integration) Agent to undo the last N steps and it
+  task file. Ask the Worker (or Integration) Agent to undo the last N steps and it
   resets every affected repo back to its captured state and puts the
-  chunks back on the queue. You can let an agent try aggressive changes
+  tasks back on the queue. You can let an agent try aggressive changes
   and roll the whole thing back with one request.
 - **A planning surface that stays useful.** `Status.md` is a simple
   table (Part / Expected / Current / Completion % / Last Checked) the
