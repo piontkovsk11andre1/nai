@@ -74,18 +74,20 @@ to finalize the installation on their own machine.
 Concretely, when you finish scaffolding:
 
 1. A single top-level launcher (script, command, or desktop entry)
-   exists and is configured to open an AI agent with the `Installation
-   Agent` prompt. This is the state you leave behind. You do **not** switch
-   the launcher to the `Workspace Agent` prompt at any point; that switch
-   is performed later by the `Installation Agent` itself, after the user
-   runs the launcher and completes its checklist.
+  exists and is configured to read `Current Prompt.txt`, then open an AI
+  agent with the prompt named there. This is the state you leave behind.
+  `Current Prompt.txt` initially points to the `Installation Agent` prompt.
+  You do **not** switch the active prompt to the `Workspace Agent` prompt
+  at any point; that switch is performed later by the `Installation Agent`
+  itself, after the user runs the launcher and completes its checklist.
 2. A `Workspaces/__template__` directory exists with all per-workspace
    artifacts and per-agent launchers as stubs.
 3. All scripts in the chosen programming language are present, syntactically
    valid, and obey the contracts in section 9.
 4. All workflow paths required by the contracts are wired end to end:
    `Workspace - Create`, `Workspace - Remove` (archive), `Work - Do`,
-  `Work - Move`, `Work - Undo`, dispatcher (`Agent`), and at least the
+  `Work - Move`, `Work - Undo`, dispatcher (`Agent`), the active-prompt
+  state file, and at least the
   `Default` worker wrapper.
 
 You are done when the verification checklist in section 13 passes. The
@@ -180,10 +182,10 @@ deferring it.
    restore the workflow root to its post-scaffold state? Default: no. This
    practice pass checks that the scripts and launchers are connected
    correctly using a throwaway workspace and throwaway repos. It does
-   **not** call the AI tool for real -- every harness invocation uses
-   `--mode cli --dry-run`, so no tokens are spent and no model round-trips
-   happen. If yes, follow the protocol in section 13.5 at the end of the
-   verification checklist.
+  **not** call the AI tool for real -- workflow state transitions use
+  `--rehearse`, and every harness invocation uses `--mode cli --dry-run`, so
+  no tokens are spent and no model round-trips happen. If yes, follow the
+  protocol in section 13.5 at the end of the verification checklist.
 
 After question 6, summarize the chosen configuration in one short message,
 then proceed to scaffolding (sections 6-12).
@@ -327,6 +329,17 @@ directories: `Next/`, `Current/`, `Blocked/`, `Done/`.
   least 4 digits (zero-padded when needed). Scripts that select or move tasks
   must validate this and fail fast with a clear user/precondition error
   naming any offending file.
+- Filename validation errors must use a recovery-oriented format that includes
+  the offending file path, the canonical pattern, one example, and the exact
+  next action. Required shape, translated except for the protocol pattern:
+
+  ```
+  Error: task file name is not canonical.
+  Offending file: <path>
+  Expected pattern: w-NNNN. <title>.md
+  Example: w-0001. Feature X.md
+  Action: rename or remove the offending file before retrying.
+  ```
 
 ### 4.3a Task-file schema (canonical example)
 
@@ -452,7 +465,12 @@ Invoked non-interactively with these arguments:
 - `--blocked-action to-current|to-done` (optional)
 - `--current-action restart|to-done` (optional)
 - `--mode cli|tui` (optional, default `cli`)
-- `--dry-run` (optional flag, passed through)
+- `--dry-run` (optional flag; read-only preview, no queue or repository
+  mutation)
+- `--rehearse` (optional flag; perform workflow state transitions while
+  passing `--dry-run` to harness invocations so no model call is made)
+- `--verifier-timeout <seconds>` (optional positive integer; when provided,
+  verifier dispatch must finish within this many seconds)
 
 Decision order on each invocation:
 
@@ -484,11 +502,15 @@ Decision order on each invocation:
   - Validate `Work/Next/` task filenames against section 4.3 before
     selection; on mismatch exit non-zero with a clear message.
    - Let `<task>` be the first file in `Work/Next/` by lexical name.
+   - If `--dry-run` is set and `--rehearse` is not set, print the planned
+     `Next -> Current` transition and continue through the planned execution
+     and verification steps without invoking `Work - Move` or changing any
+     file. `--dry-run` is a read-only preview.
    - Invoke `Work - Move` with `--from next --to current --task <task>`.
-   - Continue to execution. Note: this pop-and-write step runs even when
-     `--dry-run` is set; the dry-run guard only skips the verifier-output
-     interpretation and finalization check in step 4. A dry run therefore
-     still mutates `Next/` and `Current/` on disk.
+   - Continue to execution. When `--rehearse` is set, this pop-and-write
+     step intentionally runs on disk, but every harness invocation below is
+     made with `--dry-run` so no tokens are spent and no model round-trip
+     happens.
 
 4. Execution and verification:
   - Build a tail string equal to the current task body (metadata
@@ -509,26 +531,40 @@ Decision order on each invocation:
      dispatcher call must run with `--mode cli` regardless of the mode
      requested by the caller, because the verifier must finalize state by
      invoking `Work - Move` directly. The verifier call may stream output live.
+     If `--verifier-timeout` is provided and the verifier dispatcher does not
+     finish before the timeout, terminate the verifier process, preserve any
+     verification output file bytes that exist, invoke `Work - Move` with
+     `--from current --to blocked --reason-kind INVALID --reason "..."`, and
+     use a concrete translated one-line reason that names the timeout seconds.
    - If the verifier dispatcher exits non-zero: invoke `Work - Move` with
      `--from current --to blocked --reason-kind DISPATCHER --reason "..."`
      where `--reason` is a concrete one-line translated sentence that
      includes the verifier dispatcher exit code `<N>`, then exit with the
-     verifier dispatcher's code. This fallback move must be checked: if
+     verifier dispatcher's code. If the verification output file exists, pass
+     it to this fallback `Work - Move` with `--verification-output-file` so the
+     partial verifier output is preserved in the blocked task. This fallback
+     move must be checked: if
      `Work - Move` itself exits non-zero, print a clear second error that
      blocking failed and exit non-zero with the move failure code.
-   - Otherwise, in non-dry-run mode validate post-verify state:
+   - Otherwise, when neither `--dry-run` nor `--rehearse` is set, validate
+     post-verify state:
      - if the same task file now exists in `Work/Done/`: success;
      - if it now exists in `Work/Blocked/`: failure, exit code 3;
      - if it still exists in `Work/Current/`: treat as `INVALID`, invoke
        `Work - Move` with `--from current --to blocked --reason-kind INVALID`
+       and pass `--verification-output-file` if the verifier output file exists,
        and exit 3 when the move succeeds; if the fallback move fails, print a
        clear second error that blocking failed and exit non-zero with the
        move failure code;
      - any other state is a precondition error and exits non-zero.
    - On success: print one short success line.
-   - When `--dry-run` is set, skip verifier-output handling and do not enforce
-     finalization checks. The `Next -> Current` queue movement above still
-     happens; harness invocations themselves are dry-run prints only.
+   - When `--dry-run` is set and `--rehearse` is not set, skip all mutation,
+     verifier-output handling, and finalization checks. Print the dispatcher
+     commands that would be invoked.
+   - When `--rehearse` is set, perform queue transitions and repository
+     operations owned by workflow scripts, but pass `--dry-run` to dispatcher
+     calls and skip verifier-output handling and finalization checks. This is
+     the only dry-harness mode allowed to mutate queue state.
 
 5. Else (`Blocked`, `Current`, and `Next` all empty):
    - Print a single line indicating there is nothing to do and exit 0.
@@ -611,6 +647,10 @@ Invoked non-interactively with these arguments:
 
 - `--count <N>` (required, positive integer)
 - `--workspace <path>` (optional; same default as `Work - Do`)
+- `--force` (required before any destructive repository rollback)
+- `--snapshot-before-undo <path>` (optional path where affected repository
+  working trees are copied before destructive rollback; when omitted the
+  script creates a timestamped snapshot under the workspace scratch area)
 
 Behavior:
 
@@ -621,9 +661,19 @@ Behavior:
   a clear message naming the offending file. Take the last
   `min(N, len(done))` tasks as the undo set.
 2. Preflight: for every rollback entry across the undo set, verify the target
-   commit exists in the corresponding repository. If any check fails, exit
-   non-zero before making any changes.
-3. For each affected repository, run `git reset --hard <commit>` then
+  commit exists in the corresponding repository. Also report each affected
+  repository's dirty status, untracked files, ignored files that would be
+  removed by `git clean -fdx`, and stash entries. If any check fails, exit
+  non-zero before making any changes.
+3. If `--force` is missing, print the preflight report and refuse to run the
+  destructive rollback. The message must name `--force` and explain that the
+  operation will run `git reset --hard` and `git clean -fdx`.
+4. Before running any destructive git command, create a UTF-8 logged snapshot
+  of every affected repository working tree, excluding `.git` directories,
+  at `--snapshot-before-undo` when provided or at a generated timestamped
+  path under workspace scratch storage when omitted. If the snapshot fails,
+  exit non-zero before making any changes.
+5. For each affected repository, run `git reset --hard <commit>` then
   `git clean -fdx`. When more than one task in the undo set references
    the same repository, use the **oldest** captured hash (the rollback
   header of the task with the smallest workload ID in the undo set,
@@ -631,11 +681,12 @@ Behavior:
   state that existed before the first undone task. Stop on first repo
    failure with a non-zero exit; do not try to recover, but report which
    repo and what failed.
-4. For each undone task, strip rollback and blocked-reason frontmatter fields and move
+6. For each undone task, strip rollback and blocked-reason frontmatter fields and move
   the file to `Work/Next/` in original order.
 
-Destructive intent is by design: dirty working trees are erased. This is the
-only allowed destructive repository rollback behavior under section 1.
+Destructive intent is allowed only after the explicit `--force` gate and the
+snapshot preflight above. This is the only allowed destructive repository
+rollback behavior under section 1.
 
 ### 4.7 `Workspace - Create`
 
@@ -794,20 +845,21 @@ The Research Agent prompt must instruct the agent to:
   are aware of it and may consult it on demand by searching for the
   relevant section title.
 
-### 4.12 Launcher switch after installation
+### 4.12 Active prompt switch after installation
 
 This switch is performed by the `Installation Agent` (the prompt described
 in section 8.2), not by the scaffolder running this document. As the
-scaffolder, you must leave the top-level launcher pointing at the
-`Installation Agent` prompt.
+scaffolder, you must leave `Current Prompt.txt` pointing at the
+`Installation Agent` prompt and leave the top-level launcher static.
 
 When the end user later runs the `Installation Agent` and completes its
-checklist, that agent changes the top-level launcher so it opens the
-`Workspace Agent` prompt instead of the `Installation Agent` prompt. The
-launcher file name stays the same. The required semantic change is the
-prompt target; other metadata such as `--agent-name` may either stay as-is
-or be updated to match the new prompt, as long as the launcher still invokes
-the same dispatcher and worker correctly.
+checklist, that agent changes `Current Prompt.txt` so the static top-level
+launcher opens the `Workspace Agent` prompt instead of the `Installation
+Agent` prompt. The launcher file name and launcher content stay the same.
+The required semantic change is the active prompt state; other metadata such
+as `--agent-name` may be derived by the launcher or dispatcher from the active
+prompt, as long as the launcher still invokes the same dispatcher and worker
+correctly.
 
 ### 4.13 Per-workspace agent TUI welcome and idle-on-start
 
@@ -867,9 +919,12 @@ Required behavior when one of these agents is running in `--mode tui`:
   Prompts may recognize chosen-language equivalents, but they must map
   to these same canonical role keys before switching.
 - On a valid request, the handoff is **in-chat** and **same-session**:
-  the agent switches to the target role prompt and continues in the
+  the agent adopts the target role's prompt behavior and continues in the
   same chat, in the same workspace, with prior conversation context
-  preserved.
+  preserved. This is a prompt-level same-session switch unless the chosen AI
+  harness exposes a real system-prompt replacement primitive; prompts must not
+  imply that a script-enforced role boundary exists when the harness does not
+  provide one.
 - The agent acknowledges the switch in one short line before continuing
   under the target role behavior.
 - Mixed-intent precedence is deterministic:
@@ -992,6 +1047,7 @@ Canonical names (English defaults):
 INSTALL.md                                        (this file is consumed by the AI; do not regenerate it)
 README.md
 Open Agent                                        (top-level launcher; extension depends on OS)
+Current Prompt.txt                               (active top-level prompt path)
 Prompts/
   Installation Agent.md
   Workspace Agent.md
@@ -1115,8 +1171,10 @@ Requirements regardless of language:
 
 ### 5.4 OS launcher mechanism
 
-Pick the recipe in section 10 that matches the chosen OS. The launcher
-invokes the dispatcher with the appropriate prompt path and worker.
+Pick the recipe in section 10 that matches the chosen OS. The top-level
+launcher reads `Current Prompt.txt` and invokes the dispatcher with that active
+prompt path and worker. Per-workspace launchers invoke the dispatcher with
+their fixed per-agent prompt path and worker.
 On Windows, launchers must be plain-text `.cmd` files, not `.lnk`
 shortcuts. For Python-based distributions, the launcher must resolve
 Python in this exact order: `py` on `PATH`, then `python` on `PATH`, then
@@ -1139,8 +1197,9 @@ Lifecycle:
 
 1. The user opens the top-level launcher. The first time, it opens an AI
    agent with the `Installation Agent` prompt. That agent runs the
-   installation checklist (section 8.2) and, as its last step, switches the
-   same launcher to point at the `Workspace Agent` prompt.
+  installation checklist (section 8.2) and, as its last step, switches
+  `Current Prompt.txt` so the same static launcher opens the `Workspace
+  Agent` prompt.
 2. From the second launch onward, the same launcher opens the `Workspace
    Agent` prompt.
 3. The Workspace Agent can create a workspace, archive a workspace, or open
@@ -1176,14 +1235,17 @@ the `Installation Agent` in section 8.2 step 1.
 
 - `README.md` - short overview of the workflow, the lifecycle, and how to
   launch.
-- `Open Agent.<launcher-ext>` - top-level launcher (see section 10). Points
-  at the `Installation Agent` prompt. The `Installation Agent` switches it
-  to the `Workspace Agent` prompt at the end of its own checklist
-  (section 4.12).
+- `Open Agent.<launcher-ext>` - top-level launcher (see section 10). It stays
+  static and reads `Current Prompt.txt` to choose the active top-level prompt.
+- `Current Prompt.txt` - active top-level prompt state. It initially contains
+  the absolute path to `Prompts/Installation Agent.md`; the `Installation
+  Agent` switches this file to `Prompts/Workspace Agent.md` at the end of its
+  own checklist (section 4.12) after explicit user confirmation.
 - `Prompts/Installation Agent.md` - prompt that drives an installation
   conversation similar to the one that produced this workflow. Tells the AI
   to verify worker wrappers, repositories, naming, optional framework
-  mapping, and finally to switch the launcher. Platform-agnostic content.
+  mapping, and finally to switch the active prompt state. Platform-agnostic
+  content.
 - `Prompts/Workspace Agent.md` - prompt that orchestrates workspace creation,
   archival, and opening per-workspace agents.
 
@@ -1279,14 +1341,32 @@ in any order:
 - A two-to-three-line overview of the agentic, workspace-based delivery
   model.
 - The launcher lifecycle (first run uses `Installation Agent`, subsequent
-  runs use `Workspace Agent`).
+  runs use `Workspace Agent`) and the fact that `Current Prompt.txt`, not a
+  launcher rewrite, owns that active top-level prompt state.
+- A short `Active prompt switch audit` section. The scaffolder writes an
+  initial entry saying the active prompt starts as `Installation Agent`; the
+  Installation Agent appends one timestamped entry when it switches
+  `Current Prompt.txt` to `Workspace Agent` after user confirmation.
 - The dispatcher contract (the canonical flags of `Scripts/Agent.<ext>`).
 - The work-queue directory set (`Next/`, `Current/`, `Blocked/`, `Done/`) and
   task-file naming convention.
 - The typical end-to-end flow that mirrors section 6.
-- A short safety note: workspace removal is archive-only, no remote push
-  without explicit user request.
+- A short safety note: workspace removal is archive-only, `Work - Undo` is
+  destructive only with explicit `--force` plus snapshot preflight, and no
+  remote push happens without explicit user request.
 - A bullet list of the scripts with a one-line purpose each.
+
+### 8.1a `Current Prompt.txt`
+
+Single-line UTF-8 text file, LF-terminated, with no quotes and no surrounding
+prose. The line contains the absolute path to the active top-level prompt.
+The scaffolder writes the absolute path to `Prompts/Installation Agent.md`.
+The Installation Agent may later replace it with the absolute path to
+`Prompts/Workspace Agent.md` after section 8.2 step 8 confirmation. If
+localized file names are enabled, use the effective mapped prompt filenames
+from section 5.2 instead of the canonical English basenames. Empty content,
+relative paths, paths outside the workflow root `Prompts/` directory, and paths
+that do not exist are invalid.
 
 ### 8.2 `Prompts/Installation Agent.md`
 
@@ -1305,14 +1385,24 @@ updates the affected files to match.
 
 Guidance:
 - Goal: prepare this distribution so the next launch opens `Workspace Agent`
-  instead of `Installation Agent`.
+  instead of `Installation Agent` by switching `Current Prompt.txt` after the
+  checklist passes.
 - Rules: keep the prompt platform-agnostic; one question at a time; do not
   reconfigure `Scripts/Workers/Default` (it is already wired by the
   scaffolder and is the very wrapper running this agent); produce
   concrete file updates and commands; explain what you are setting up, what
   happens next, and how the user will use the result; avoid low-level
   implementation detail unless it affects a real user decision; no remote
-  push.
+  push. At startup, if `Current Prompt.txt` already points to the `Workspace
+  Agent` prompt and the template installation checks are complete, stop and
+  tell the user installation is already complete; do not restart the strict
+  installer interview unless the user explicitly asks to repair or rerun
+  installation. Before changing workflow-control artifacts (`Current
+  Prompt.txt`, files under `Scripts/`, files under `Scripts/Workers/`, or the
+  top-level launcher), describe the exact intended change and ask one yes/no
+  confirmation. The only expected script change in normal installation is
+  adding optional extra worker wrappers; `Scripts/Workers/Default` and the
+  top-level launcher are not changed by normal installation.
 - Installation checklist (in order):
   1. **Additional worker wrappers (optional).** `Scripts/Workers/Default`
      was configured by the scaffolder and must not be changed here. If the
@@ -1446,7 +1536,7 @@ Guidance:
      expressed by editing existing files within the manifest, decline
      and explain the constraint; capture the request as a follow-up
      entry in `Workspaces/__template__/Backlog.md` instead.
-  7. **Verify installation.** Before switching the launcher, run a
+  7. **Verify installation.** Before switching the active prompt state, run a
      self-check and fix anything that fails. Do not ask the user to do
      this; do it and report results. Tell the user what was checked and
      whether it passed, without turning the summary into a low-level dump.
@@ -1480,28 +1570,38 @@ Guidance:
        same two translated bootstrap sentences as `Scripts/Workers/Default`
        (section 4.2). Any drift in those sentence literals is repaired
        before proceeding.
-     - Dispatcher smoke test before the launcher switch: invoke
+     - Dispatcher smoke test before the active-prompt switch: invoke
        `Scripts/Agent.<ext>` with
        `--worker Default --prompt <abs Installation Agent path> --mode cli
        --dry-run` and confirm it prints a harness command without error.
-       After the launcher has been switched in step 8, re-run the same smoke
-       test against `Workspace Agent.md`.
-     - Top-level launcher (before the switch in step 8) still parses
+       After `Current Prompt.txt` has been switched in step 8, re-run the same
+       smoke test against `Workspace Agent.md`.
+     - Top-level launcher (before the active-prompt switch in step 8) still parses
        and targets the dispatcher with valid arguments per section 10.
        On Windows with Python launchers, confirm that `Open Agent.cmd`
        resolves Python in this order: `py` on `PATH`, then `python` on
        `PATH`, then `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`,
        and that it does not hardcode a user-profile absolute path.
+     - Harness permission readiness: confirm the configured harness can at
+       least be started in dry-run command construction, the prompt file is
+       readable as UTF-8, and the user has been shown a concise checklist of
+       any harness-specific workspace permission/settings files that may be
+       needed at the workflow root. Do not invent or create those settings
+       files. If the exact file names are unknown, say to consult the harness
+       documentation.
      If any check fails, repair the offending artifact and re-run the
      affected check. Only proceed to step 8 once all checks pass.
 
-  8. **Switch the top-level launcher.** Change the top-level `Open Agent`
-     launcher so the next launch starts `Workspace Agent` instead of
-     `Installation Agent` (section 4.12). Do not change the launcher file
-     name or any other property. After the switch, re-run the dispatcher
-     smoke test from step 7 against the new prompt target
-     (`Workspace Agent.md`) to confirm the launcher still resolves to a
-     valid harness command.
+    8. **Switch the active top-level prompt.** Ask one yes/no confirmation
+      before switching. If the user confirms, update `Current Prompt.txt` so
+      the next launch starts `Workspace Agent` instead of `Installation Agent`
+      (section 4.12). Do not rewrite the top-level `Open Agent` launcher. Before
+      writing, verify that the target `Workspace Agent.md` prompt exists. After
+      the switch, re-run the dispatcher smoke test from step 7 against the new
+      prompt target (`Workspace Agent.md`) to confirm the static launcher state
+      still resolves to a valid harness command. Append a timestamped entry to
+      the README's `Active prompt switch audit` section recording the old
+      prompt, new prompt, and that the user confirmed the switch.
 
   9. **Offer to open Workspace Agent in a new window.** Immediately
      before emitting the final completion message in step 10, ask the
@@ -1535,7 +1635,7 @@ Guidance:
   `Workspaces/__template__/Workspace.md`; updated or stubbed
   `Workspaces/__template__/Framework.md` (with a backlog note when
   stubbed); updated `Workspaces/__template__/Prompts/Integration Agent.md`;
-  top-level launcher switched to `Workspace Agent`; any
+  `Current Prompt.txt` switched to `Workspace Agent`; any
   integration-related edits from step 6 applied to the existing files
   named in that step (no new files or scripts outside the section 7
   manifest, interpreted through section 5.2, except optional wrappers
@@ -1984,6 +2084,12 @@ Guidance:
   In both paths, the verifier passes `--verification-output-file` with the
   exact path provided in the verifier tail so the full verification output is
   appended to the task file.
+- If the `Work - Move` finalization call fails, the verifier must report that
+  failure and exit non-zero. The verifier must not claim success unless
+  `Work - Move` succeeded.
+- If the verifier exits without finalizing through `Work - Move`, `Work - Do`
+  treats the task as `INVALID`, moves it to `Blocked/`, and preserves the
+  verification output file when one was written.
 - Output expectation: verifier prose is free-form and human-readable.
   `Work - Do` does not parse protocol tokens from verifier output.
 
@@ -2106,8 +2212,12 @@ def main():
     return subprocess_run(cmd).exit_code
 ```
 
-Exit codes: 0 success, 2 user error (bad prompt or worker), worker's own
-exit code otherwise.
+  The dispatcher must read the prompt file as UTF-8 before invoking the worker.
+  If the prompt exists but is unreadable or not valid UTF-8, exit 2 with a clear
+  message. This fails before any harness process is started.
+
+  Exit codes: 0 success, 2 user error (bad prompt, unreadable prompt, invalid
+  UTF-8 prompt, or bad worker), worker's own exit code otherwise.
 
 `normalize_csv_absolute(csv_text)` contract:
 - split on literal `,` characters;
@@ -2239,10 +2349,14 @@ Verification outcome handling:
 
 - Verifier dispatcher non-zero -> invoke `Work - Move` from `current`
   to `blocked` with kind `DISPATCHER` and a concrete translated one-line
-  reason containing the verifier dispatcher exit code, then return that
-  exit code.
-- Verifier dispatcher zero in non-dry-run mode -> verify that the active
-  task was finalized by verifier through `Work - Move`:
+  reason containing the verifier dispatcher exit code, pass the verification
+  output file if it exists, then return that exit code.
+- Verifier timeout when `--verifier-timeout` is provided -> terminate the
+  verifier process, invoke `Work - Move` from `current` to `blocked` with kind
+  `INVALID`, a concrete translated one-line timeout reason, and the
+  verification output file if it exists, then return 3.
+- Verifier dispatcher zero when neither `--dry-run` nor `--rehearse` is set ->
+  verify that the active task was finalized by verifier through `Work - Move`:
   - task in `Done/` -> success;
   - task in `Blocked/` -> return 3;
   - task still in `Current/` -> invoke `Work - Move` with kind `INVALID`
@@ -2261,9 +2375,17 @@ Behavior follows section 4.6 step by step. Provide:
 - `git_commit_exists(repo, hash)` via `git cat-file -e <hash>^{commit}`.
 - `git_reset_hard(repo, hash)` via `git reset --hard <hash>`.
 - `git_clean_fdx(repo)` via `git clean -fdx`.
+- `git_status_porcelain(repo)` for dirty-state reporting.
+- `git_stash_list(repo)` for stash reporting.
+- `snapshot_working_tree(repo, destination)` that copies affected working
+  trees before destructive commands and excludes `.git` directories.
 - Sort `Done/` task files by workload identifier rule from section 4.6.
 - Strip rollback/blocked frontmatter fields before moving undone task files back to
   `Next/`.
+
+The implementation must refuse to run destructive rollback without `--force`,
+even when the preflight report is clean. The refusal must happen before any
+snapshot or mutation.
 
 Exit codes: 0 success, 2 user/precondition error including preflight
 failures.
@@ -2429,8 +2551,10 @@ inspection):
 
 ## 10. OS launcher recipes
 
-Pick the recipe that matches the chosen OS. Each launcher invokes the
-dispatcher with the appropriate prompt path and worker.
+Pick the recipe that matches the chosen OS. Per-workspace launchers invoke the
+dispatcher with their fixed prompt path and worker. The top-level launcher is
+static: it reads `Current Prompt.txt` from the workflow root, validates that it
+names an existing prompt file, and invokes the dispatcher with that prompt.
 
 The dispatcher is invoked with the project's interpreter for the chosen
 programming language (for example: `py` on Windows for Python, `python3` on
@@ -2462,7 +2586,21 @@ if not defined PYTHON_CMD (
 )
 
 cd /d "%~dp0"
-call "%PYTHON_CMD%" "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<prompt path>" [--workspace "<path>"] --mode tui --agent-name "<Agent Name>" --new-window
+if exist "Current Prompt.txt" (
+  set /p "PROMPT_PATH="<"Current Prompt.txt"
+) else (
+  >&2 echo Current Prompt.txt not found.
+  exit /b 2
+)
+if not exist "%PROMPT_PATH%" (
+  >&2 echo Active prompt not found: %PROMPT_PATH%
+  exit /b 2
+)
+echo(%PROMPT_PATH%| findstr /i /b /c:"%CD%\Prompts\" >nul || (
+  >&2 echo Active prompt must be under Prompts/: %PROMPT_PATH%
+  exit /b 2
+)
+call "%PYTHON_CMD%" "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "%PROMPT_PATH%" --mode tui --agent-name "Open Agent" --new-window
 exit /b %ERRORLEVEL%
 ```
 
@@ -2476,11 +2614,13 @@ Notes:
   language. For Go on Windows, resolve `go` via `where go`; if missing,
   emit a clear error and exit 127; when present, invoke
   `go run "<abs path to Scripts/Agent.go>" ...`.
-- Top-level `Open Agent.cmd` uses an absolute prompt path to
-  `Prompts/Installation Agent.md` initially. After installation switch it to
-  `Prompts/Workspace Agent.md` (same launcher file, only the prompt path
-  changes).
-- Per-workspace launchers use a relative prompt path (`Prompts/<Agent>.md`)
+- Top-level `Open Agent.cmd` reads `Current Prompt.txt` from the workflow root
+  and passes that absolute prompt path to the dispatcher. The launcher file is
+  static; installation switches the active prompt by updating
+  `Current Prompt.txt`, not by rewriting the launcher.
+- The example above is the top-level launcher shape. Per-workspace Windows
+  launchers omit `Current Prompt.txt` and pass a relative prompt path
+  (`Prompts/<Agent>.md`)
   and `--workspace "."`; `<Agent>` resolves to the effective mapped prompt
   basename for that role when section 5.2 localization is enabled. The
   launcher itself must change to its own directory first (`cd /d "%~dp0"`)
@@ -2490,6 +2630,30 @@ Notes:
 
 Each launcher is an executable shell script with a `.command` extension so
 the user can double-click it from Finder.
+
+Top-level launcher:
+
+```
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+prompt_path="$(tr -d '\r\n' < "Current Prompt.txt")"
+if [[ -z "$prompt_path" || ! -f "$prompt_path" ]]; then
+  printf '%s\n' "Active prompt not found: $prompt_path" >&2
+  exit 2
+fi
+case "$prompt_path" in
+  "$(pwd)/Prompts/"*) ;;
+  *) printf '%s\n' "Active prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;;
+esac
+exec "<interpreter>" "<abs path to Scripts/Agent.<ext>>" \
+  --worker "Default" \
+  --prompt "$prompt_path" \
+  --mode tui \
+  --agent-name "Open Agent"
+```
+
+Per-workspace launcher:
 
 ```
 #!/usr/bin/env bash
@@ -2506,10 +2670,22 @@ exec "<interpreter>" "<abs path to Scripts/Agent.<ext>>" \
 For Go launchers, use `go run` semantics instead of a single interpreter
 token: `exec go run "<abs path to Scripts/Agent.go>" ...`.
 
-Make the file executable (`chmod +x`). For the top-level launcher omit the
-`--workspace` argument and use an absolute prompt path.
+Make the file executable (`chmod +x`).
 
 ### 10.3 Linux: `.desktop` entries
+
+Top-level launcher:
+
+```
+[Desktop Entry]
+Type=Application
+Name=Open Agent
+Exec=sh -c 'prompt_path="$(tr -d "\r\n" < "$1/Current Prompt.txt")"; if [ -z "$prompt_path" ] || [ ! -f "$prompt_path" ]; then printf "%s\n" "Active prompt not found: $prompt_path" >&2; exit 2; fi; case "$prompt_path" in "$1/Prompts/"*) ;; *) printf "%s\n" "Active prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;; esac; exec <interpreter> "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "$prompt_path" --mode tui --agent-name "Open Agent"' sh "<workflow root>"
+Path=<workflow root>
+Terminal=true
+```
+
+Per-workspace launcher:
 
 ```
 [Desktop Entry]
@@ -2527,54 +2703,20 @@ Mark the file executable. Do not create any additional launcher or wrapper
 files on Linux unless they are explicitly listed in the effective manifest
 (section 5.2 + section 7).
 
-### 10.4 Switching the top-level launcher after installation
+### 10.4 Switching the active top-level prompt after installation
 
-At the end of installation, regenerate or edit the top-level launcher so its
-prompt argument points to `Prompts/Workspace Agent.md` (absolute path). The
-launcher file name does not change. Keep the dispatcher, worker, mode, and
-working directory semantics identical; metadata such as `--agent-name` may be
-left unchanged or updated to match the new prompt.
+At the end of installation, do not regenerate or edit the top-level launcher.
+Instead, update `Current Prompt.txt` so its single line is the absolute path to
+`Prompts/Workspace Agent.md`. The launcher file name and content stay
+identical. Keep the dispatcher, worker, mode, and working-directory semantics
+in the launcher unchanged.
 
-The Installation Agent must perform this switch through the OS-native
-launcher mechanism. On Windows, macOS, and Linux the launcher artifacts in
-section 10 are plain text, so the switch is performed by regenerating the
-launcher file with the new prompt target while preserving its runtime
-resolution logic and working-directory semantics.
-
-**Windows (`.cmd`).** Rewrite `Open Agent.cmd` using the recipe from
-section 10.1 so it still resolves Python in the same order and now points
-at `Prompts/Workspace Agent.md`:
-
-```
-@echo off
-setlocal
-
-set "PYTHON_CMD="
-where py >nul 2>nul && set "PYTHON_CMD=py"
-if not defined PYTHON_CMD where python >nul 2>nul && set "PYTHON_CMD=python"
-if not defined PYTHON_CMD if exist "%LOCALAPPDATA%\Programs\Python\Launcher\py.exe" set "PYTHON_CMD=%LOCALAPPDATA%\Programs\Python\Launcher\py.exe"
-if not defined PYTHON_CMD (
-  >&2 echo Could not find Python. Tried: py on PATH, python on PATH, %%LOCALAPPDATA%%\Programs\Python\Launcher\py.exe
-  exit /b 127
-)
-
-cd /d "%~dp0"
-call "%PYTHON_CMD%" "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<abs path to Prompts/Workspace Agent.md>" --mode tui --agent-name "Workspace Agent" --new-window
-exit /b %ERRORLEVEL%
-```
-
-The launcher file name stays identical. Preserve the Python resolution
-order, `cd /d "%~dp0"`, and the rest of the dispatcher arguments; update
-only the prompt target and optional `--agent-name` metadata. Preserve
-`--new-window` when the Windows launcher uses it.
-
-**macOS (`.command`) and Linux (`.desktop`).** These are plain text files;
-regenerate them via the recipe in section 10.2 or 10.3 with the new prompt
-path, overwriting the existing file. Preserve the executable bit
-(`chmod +x`) after rewriting on macOS/Linux.
-
-After switching, the Installation Agent must verify the launcher still
-resolves to a valid harness command (per section 8.2 step 7) before
+Before writing `Current Prompt.txt`, the Installation Agent must verify that
+the target prompt exists and ask the user one yes/no confirmation. If the user
+declines, leave `Current Prompt.txt` pointing at `Prompts/Installation
+Agent.md` and report that installation is not complete. After switching, the
+Installation Agent must verify the static launcher plus `Current Prompt.txt`
+still resolves to a valid harness command (per section 8.2 step 7) before
 reporting installation complete.
 
 ---
@@ -2658,7 +2800,7 @@ After scaffolding, run these checks. Do not ask the user; do them yourself
 and report results.
 
 0. **Cleanup pass.** Before running the remaining checks, walk the entire
-   workflow root and delete every file or directory that is not part of
+   workflow root and identify every file or directory that is not part of
   the effective manifest (section 5.2 + section 7) and was created by
   scaffolding,
     verification, or rehearsal. Preserve any pre-existing user workspaces
@@ -2673,9 +2815,13 @@ and report results.
      (summaries, change notes, READMEs inside subdirectories);
    - any partially generated files left over from aborted attempts in the
      current run.
-   Provenance is mandatory: compare against the baseline inventory captured
-   before scaffolding and treat every path present in that baseline as
-   pre-existing user content, never as removable scratch.
+  Provenance is mandatory: compare against the baseline inventory captured
+  before scaffolding and treat every path present in that baseline as
+  pre-existing user content, never as removable scratch. Delete only paths
+  whose provenance is known to be from this scaffold, verification, or
+  rehearsal run. Unknown non-manifest paths must be reported and left in
+  place unless the user explicitly confirms deletion in a separate yes/no
+  question.
     The only exceptions are: this `INSTALL.md` (consumed input), the files
     in the effective manifest, and any pre-existing user workspaces under
     `Workspaces/` that were not created by this run. The four template
@@ -2699,12 +2845,20 @@ and report results.
 3. Dispatcher dry-run with the Installation Agent prompt prints a valid
    harness command. Example: invoke the dispatcher with
    `--worker Default --prompt <abs Installation Agent path> --mode cli --dry-run`.
+  Also verify that an unreadable or invalid UTF-8 prompt file is rejected
+  before any worker or harness process is started.
 4. Each per-agent launcher has the expected content and working-directory
    semantics per section 10. On Windows with Python launchers, validate that
    each `.cmd` file resolves Python in this order: `py` on `PATH`, then
    `python` on `PATH`, then `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`,
-   and that it invokes the dispatcher without hardcoding a user-profile
-   absolute path.
+  and that it invokes the dispatcher without hardcoding a user-profile
+  absolute path. Verify the top-level launcher is static, reads
+  `Current Prompt.txt`, refuses a missing or nonexistent active prompt, and
+  rejects active prompt paths outside the workflow root `Prompts/` directory.
+  Verify it does not hardcode either `Installation Agent.md` or
+  `Workspace Agent.md` as its permanent prompt target. Verify
+  `Current Prompt.txt` initially points to `Prompts/Installation Agent.md` and
+  `README.md` contains the initial `Active prompt switch audit` entry.
 5. `Work - Move` transition matrix check: in a scratch workspace create
    synthetic task files and verify each allowed transition from section
    4.5a succeeds, each disallowed transition fails, `Current/` singleton
@@ -2716,6 +2870,11 @@ and report results.
 6. `Workspace - Remove` refuses to run without `--synced`.
 7. `Work - Do` refuses to run when `Blocked` or `Current` is non-empty
    without the matching action flag.
+   - Dry-run state check: with a task in `Work/Next/`, run `Work - Do
+     --dry-run` and confirm no queue file bytes or repository state changed.
+   - Rehearsal state check: with a task in `Work/Next/`, run `Work - Do
+     --rehearse` and confirm the task moves to `Work/Current/`, dispatcher
+     calls are printed/dry-run only, and no verifier finalization is enforced.
    - Verifier finalization check: in a scratch workspace with one active task,
      run one success path and one failure path through verifier-driven
      finalization and confirm both resulting task files contain an appended
@@ -2756,6 +2915,13 @@ and report results.
 12. Post-check cleanup: remove any synthetic files and scratch workspaces
     created by verification steps 5, 8, 10, and 11 so the tree returns to the
     post-scaffold state expected by step 0.
+
+12a. `Work - Undo` destructive safety check: create a scratch workspace with a
+  completed task and rollback metadata, then confirm `Work - Undo --count 1`
+  refuses to run without `--force` after printing a preflight report. Re-run
+  with `--force --snapshot-before-undo <scratch-snapshot-path>` and confirm
+  the snapshot is created before `git reset --hard` and `git clean -fdx`, the
+  task returns to `Work/Next/`, and rollback/blocked metadata is stripped.
 
 13. In-chat role switching coverage in prompt specs: verify that all five
   per-workspace prompts (`Integration Agent`, `Research Agent`, `Planner
@@ -2825,13 +2991,14 @@ Its purpose is to exercise every script and launcher wiring against a
 throwaway workspace and to roll the workflow root back to its
 post-scaffold state when finished. The rehearsal must leave **no
 artifacts** behind: no extra files, no extra git history in template
-repos, no extra entries in `__archive__/`, and no change to the
-top-level launcher.
+repos, no extra entries in `__archive__/`, and no lasting change to
+`Current Prompt.txt` or the top-level launcher.
 
 Harness calls are stubbed throughout: every dispatcher invocation that
 would normally spawn the AI harness is made with `--mode cli --dry-run`,
-so no tokens are spent and no model round-trips happen. Real subprocess
-calls are limited to the workflow scripts themselves and to `git`.
+so no tokens are spent and no model round-trips happen. Workflow state
+transitions that are intentionally exercised use `--rehearse`. Real
+subprocess calls are limited to the workflow scripts themselves and to `git`.
 
 Protocol:
 
@@ -2852,10 +3019,9 @@ Protocol:
    mirror anything the scaffolder ships (the scaffolder ships an empty
    template). No upstream is configured; everything stays local.
 
-3. **Switch the launcher (simulated).** Update the top-level `Open
-   Agent` launcher so its prompt argument points to
-   `Prompts/Workspace Agent.md`, exactly the operation described in
-   section 10.4. Verify it parses.
+3. **Switch the active prompt (simulated).** Update `Current Prompt.txt` so
+  it points to `Prompts/Workspace Agent.md`, exactly the operation described
+  in section 10.4. Verify the static launcher parses and reads the state file.
 
 4. **Create a workspace.** Invoke
    `Scripts/Workspace - Create --workspace rehearsal-smoke --branch
@@ -2869,14 +3035,14 @@ Protocol:
 5. **Queue a synthetic task and run `Work - Do`.** Write a single task file
    `Workspaces/rehearsal-smoke/Work/Next/w-0001. Rehearsal task.md`
    (something trivial, e.g. "touch a file in RehearsalA/"). Invoke
-   `Scripts/Work - Do --workspace Workspaces/rehearsal-smoke --mode cli
-   --dry-run`. Assert:
+  `Scripts/Work - Do --workspace Workspaces/rehearsal-smoke --mode cli
+  --rehearse`. Assert:
    - the task file moved out of `Work/Next/`,
    - `Work/Current/` contains the task file with valid rollback frontmatter
      (section 4.4) carrying real commit hashes from the three rehearsal repos,
    - the dispatcher was invoked with the execute prompt and the verify
      prompt (both as dry runs),
-   - because `--dry-run` was set, the task stayed in `Work/Current/` per
+   - because `--rehearse` was set, the task stayed in `Work/Current/` per
      section 4.5 step 4.
 
    Additional simulated finalization assertions (still no real harness calls):
@@ -2903,8 +3069,11 @@ Protocol:
 
 7. **Exercise `Work - Undo`.** Invoke
    `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
-   1`. Assert:
+   1` and assert it refuses without `--force`. Then invoke
+   `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
+   1 --force --snapshot-before-undo <tmp-undo-snapshot>`. Assert:
    - the task returned to `Work/Next/` without rollback frontmatter,
+   - the undo snapshot exists and was created before destructive git commands,
    - each repo's `HEAD` matches the hash that was captured in the
      rollback frontmatter (preflight succeeded, reset worked).
 
@@ -2928,8 +3097,8 @@ Protocol:
    - the rehearsal repo directories (`RehearsalA/`, `RehearsalB/`,
      `RehearsalC/`) are gone from `Workspaces/__template__/`,
    - `__archive__/` is empty,
-   - the top-level launcher targets `Prompts/Installation Agent.md`
-     again,
+   - `Current Prompt.txt` points to `Prompts/Installation Agent.md` again,
+   - the top-level launcher is unchanged and still reads `Current Prompt.txt`,
    - no `rehearsal-smoke` workspace remains.
    After restoration, delete the snapshot directory.
 
