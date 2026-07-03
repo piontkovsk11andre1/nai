@@ -2245,8 +2245,13 @@ entries:
 
 `Workflow Facts Schema: 1`
 
-Unknown Facts schema markers are hard errors for any script/tooling path
-that validates this file (user/precondition error, exit code 2).
+Facts schema handling is relaxed compared to queue metadata:
+- missing marker is treated as schema `1` for read paths;
+- unknown marker is warning-level for read paths (best-effort read);
+- on the next write to `Facts.md`, scripts/agents should normalize by writing
+  `Workflow Facts Schema: 1` as the first non-empty line;
+- Facts schema issues must not block queue transitions (`Work - Do`,
+  `Work - Move`, `Work - Undo`).
 
 ```
 ## <Short Title>
@@ -3336,8 +3341,9 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
     example entry (with `Recorded` and `Type` metadata), includes one
     correction example (`Type: correction` with `Corrects`), ends with a
     single trailing newline, and uses LF line endings with no trailing
-  whitespace (section 8.22). Confirm first non-empty line is the exact
-  marker `Workflow Facts Schema: 1`.
+  whitespace (section 8.22). Confirm the stub includes the canonical marker
+  `Workflow Facts Schema: 1` and that relaxed handling rules are documented
+  (missing/unknown marker does not block queue scripts).
 
 10. `Work - Do` validates `Current/` as a singleton queue before restart or
   `validate-only` handling. Create a scratch workspace with two canonical task files
@@ -3407,7 +3413,8 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
   no localization or spelling drift. At minimum confirm:
   - task frontmatter keys `workflow_schema`, `rollback`, `blocked`, `kind`, and `reason`
     are unchanged;
-  - Facts schema marker `Workflow Facts Schema: 1` is unchanged;
+  - Facts schema marker literal `Workflow Facts Schema: 1` is unchanged when
+    present;
   - dispatcher / worker / `Work - *` CLI flag names and enum values remain
     ASCII and exact (for example `--prompt`, `--mode`, `--from`, `--to`,
     `--current-action`, `restart`, `validate-only`);
