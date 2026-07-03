@@ -416,6 +416,9 @@ blocked:
     finished without finalizing task movement via `Work - Move`;
   - for `DISPATCHER`: a fixed translated sentence stating that the
     verifier dispatcher exited with code `<N>`.
+- Reason precedence is deterministic: when a caller provides `--reason`,
+  keep it (after one-line sanitization); when omitted, synthesize the
+  fixed translated sentence for the selected kind.
 - Embedded double quotes in the reason are replaced with single
   quotes; newlines and the literal sequence `---` are replaced with
   spaces, so the value always remains a one-line scalar.
@@ -481,7 +484,9 @@ Decision order on each invocation:
      The verifier call may stream output live.
    - If the verifier dispatcher exits non-zero: invoke `Work - Move` with
      `--from current --to blocked --reason-kind DISPATCHER --reason "..."`
-     and exit with the verifier dispatcher's code.
+     where `--reason` is a concrete one-line translated sentence that
+     includes the verifier dispatcher exit code `<N>`, then exit with the
+     verifier dispatcher's code.
    - Otherwise, in non-dry-run mode validate post-verify state:
      - if the same task file now exists in `Work/Done/`: success;
      - if it now exists in `Work/Blocked/`: failure, exit code 3;
@@ -543,7 +548,10 @@ Behavior:
   - `next -> current`: capture repo hashes (section 4.4) and ensure
     rollback frontmatter exists;
   - `current -> blocked`: add/update blocked-reason frontmatter field (section 4.4a)
-    using `--reason-kind` and `--reason` when provided;
+    using `--reason-kind` and `--reason`; when `--reason-kind DISPATCHER`
+    is used and `--reason` is omitted, synthesize the fixed translated
+    one-line reason that includes exit code `<N>` if available from caller
+    context, otherwise uses the same fixed sentence without code;
   - `blocked -> current` and `blocked -> done`: strip blocked-reason field;
   - `done -> next`: strip rollback and blocked-reason fields (remove the
     frontmatter block entirely if it becomes empty).
@@ -2179,7 +2187,9 @@ Implementation requirements:
 Verification outcome handling:
 
 - Verifier dispatcher non-zero -> invoke `Work - Move` from `current`
-  to `blocked` with kind `DISPATCHER` and return that exit code.
+  to `blocked` with kind `DISPATCHER` and a concrete translated one-line
+  reason containing the verifier dispatcher exit code, then return that
+  exit code.
 - Verifier dispatcher zero in non-dry-run mode -> verify that the active
   task was finalized by verifier through `Work - Move`:
   - task in `Done/` -> success;
