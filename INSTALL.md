@@ -41,9 +41,11 @@ Hard rules. Never violate.
   required CLI argument is missing for a decision, the script must exit
   non-zero with a clear message naming the exact argument(s) to add and rerun.
 - Before scaffolding writes any manifest path, run a workflow-root collision
-  preflight against the effective manifest. If any target path already exists,
-  stop and ask for explicit overwrite confirmation in one yes/no question.
-  Default is no. If the user declines, abort without changing files.
+  preflight against the effective manifest paths that this run may write.
+  Exclude this consumed input file `INSTALL.md` from the collision set and
+  never overwrite it. If any writable target path already exists, stop and ask
+  for explicit overwrite confirmation in one yes/no question. Default is no.
+  If the user declines, abort without changing files.
 - Never invent file or directory names beyond what this spec defines. If the
   user requests localized names, you may translate them, but you must record
   the mapping in the file-name mapping table described in section 5.2 and apply it
@@ -123,7 +125,7 @@ deferring it.
    installed. Default: the current working directory.
 
   After this answer and before writing files, run the collision preflight from
-  section 1 against the effective manifest rooted at this path.
+  section 1 against writable effective-manifest paths rooted at this path.
 
 5. **AI tool for the `Default` worker.** Which command-line AI tool should
    `Scripts/Workers/Default.<ext>` use? Default: `opencode`
@@ -172,6 +174,10 @@ deferring it.
 
 After question 6, summarize the chosen configuration in one short message,
 then proceed to scaffolding (sections 6-12).
+
+Before the first scaffold write, record a baseline inventory of the workflow
+root (relative paths plus file/dir type). Use this baseline later in section
+13 step 0 so cleanup removes only artifacts created during this run.
 
 The scaffolded distributive must ship as a clean, generic baseline:
 
@@ -232,6 +238,10 @@ Behavior:
   any other escape attempt).
 - Build a subprocess command that invokes the resolved worker script with all
   passthrough arguments, normalizing `--context-files` to absolute paths.
+  CSV parsing is strict: split on literal commas, trim outer whitespace per
+  entry, drop empty entries, and reject any resulting path entry that still
+  contains a comma character with a clear user error (exit 2), because this
+  protocol does not define escaping for commas.
 - Forward the subprocess exit code as the dispatcher exit code.
 - Do no other interpretation. In particular, do not validate the workspace.
 - `--new-window` is forwarded verbatim to the worker; the dispatcher itself
@@ -2004,6 +2014,14 @@ def main():
 Exit codes: 0 success, 2 user error (bad prompt or worker), worker's own
 exit code otherwise.
 
+`normalize_csv_absolute(csv_text)` contract:
+- split on literal `,` characters;
+- trim outer whitespace on each token;
+- drop empty tokens;
+- if any normalized token still contains `,`, fail with exit code 2 and a
+  message naming the offending value;
+- return a comma-joined list of absolute paths.
+
 ### 9.2 `Workspace - Create`
 
 Inputs: as in section 4.7.
@@ -2247,6 +2265,9 @@ def main():
 - First try a `which` equivalent.
 - On Windows, if not found, try `%APPDATA%\npm\<name>.cmd`.
 - Return `None` if nothing works.
+
+`parse_csv(args.context_files)` must follow the dispatcher CSV contract from
+section 9.1 (strict split/trim/drop-empty and comma-containing-entry reject).
 
 `tail_prefix(language)` returns the translated form of:
 `After reading the files above, the user asked you to do this:`
@@ -2528,19 +2549,25 @@ and report results.
      `__pycache__/`, `*.pyc`, `node_modules/`, `.cache/`, etc.);
    - any extra documentation files you produced beyond the manifest
      (summaries, change notes, READMEs inside subdirectories);
-   - any partially generated files left over from aborted attempts.
+   - any partially generated files left over from aborted attempts in the
+     current run.
+   Provenance is mandatory: compare against the baseline inventory captured
+   before scaffolding and treat every path present in that baseline as
+   pre-existing user content, never as removable scratch.
     The only exceptions are: this `INSTALL.md` (consumed input), the files
     in the effective manifest, and any pre-existing user workspaces under
     `Workspaces/` that were not created by this run. The four template
     `Work/*/` queue directories and the empty `Workspaces/__archive__/` directory
     are part of the manifest and must remain. The `Workspaces/__template__/`
    directory itself ships with no repository directories; any
-   `Configuration/`, `Documentation/`, `Implementation/`, or other
-   repo directories the rehearsal (section 13.5) or a previous aborted
-   run may have left behind must be removed in this pass. After this
-   pass, the manifest-managed portions of the workflow root tree must
+  `Configuration/`, `Documentation/`, `Implementation/`, or other
+  repo directories the rehearsal (section 13.5) or the current run
+  may have left behind must be removed in this pass. After this
+  pass, the manifest-managed portions of the workflow root tree must
   match the effective manifest exactly, with no extra
   scaffolder-created artifacts.
+  Do not delete unknown pre-existing paths discovered in the baseline
+  inventory, even if they appear to be leftovers from an earlier run.
 
 1. Every file from the effective manifest exists. Every manifest file that
   is specified to carry content must be non-empty; the four template queue
@@ -2632,6 +2659,17 @@ and report results.
   outside that role's responsibilities but inside another workspace role,
   with deterministic handling for one clear target vs multiple plausible
   targets (section 4.14).
+
+19. Protocol-literal immutability check: verify all generated artifacts keep
+  protocol-critical machine tokens exactly as specified (section 5.1), with
+  no localization or spelling drift. At minimum confirm:
+  - rollback header marker `<!-- rollback: ... -->` and blocked marker
+    `<!-- blocked: ... -->` are unchanged;
+  - dispatcher / worker / `Work - *` CLI flag names and enum values remain
+    ASCII and exact (for example `--prompt`, `--mode`, `--from`, `--to`,
+    `to-current`, `to-done`);
+  - logger event identifiers from section 9.7 remain exact tokens
+    (`work-do.start`, `workspace-archive.done`, etc.).
 
 If any check fails, repair before handoff.
 
