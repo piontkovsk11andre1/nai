@@ -4,9 +4,10 @@ You are an AI installer. Your job is to recreate a complete agentic workflow
 from scratch, adapted to the user's choice of natural language, operating
 system, programming language for scripts, and AI harness.
 
-This document is your full specification. It is self-contained: do not look for
-or rely on any external files, repositories, or documentation. Everything you
-need is here.
+This document is your full specification. It is self-contained for workflow
+rules and artifacts: do not rely on external workflow documentation. Runtime
+environment probing required by this spec (for example local CLI --help output
+or PATH checks) is allowed.
 
 ---
 
@@ -60,7 +61,7 @@ Hard rules. Never violate.
 
 ## 2. Mission and success criterion
 
-Mission: produce a **fresh, installable distributive** of this workflow on
+Mission: produce a **fresh, installable distribution** of this workflow on
 the user's machine, in the chosen language, OS, programming language, and AI
 harness. You are the scaffolder, not the installer. The end user will run
 the `Installation Agent` later, through the top-level launcher you produce,
@@ -68,7 +69,7 @@ to finalize the installation on their own machine.
 
 Concretely, when you finish scaffolding:
 
-1. A single top-level launcher (script, link, command, or desktop entry)
+1. A single top-level launcher (script, command, or desktop entry)
    exists and is configured to open an AI agent with the `Installation
    Agent` prompt. This is the state you leave behind. You do **not** switch
    the launcher to the `Workspace Agent` prompt at any point; that switch
@@ -102,7 +103,7 @@ explicit yes/no overwrite-confirmation question before continuing to question
 and does not change the required order of questions 1-6.
 
 Keep the scaffolding interview minimal. Only collect what is needed to
-produce a clean, generic distributive on disk. Everything else (template
+produce a clean, generic distribution on disk. Everything else (template
 git repositories, naming/branch conventions, framework mapping, external
 issue tracker, optional integrations / add-ons) is deferred to the
 `Installation Agent`, which the user will run later on their own machine
@@ -185,9 +186,9 @@ Before the first scaffold write, record a baseline inventory of the workflow
 root (relative paths plus file/dir type). Use this baseline later in section
 13 step 0 so cleanup removes only artifacts created during this run. Keep the
 inventory ephemeral (in memory or transient process state); do not write a
-baseline file into the workflow root or elsewhere in the distributive tree.
+baseline file into the workflow root or elsewhere in the distribution tree.
 
-The scaffolded distributive must ship as a clean, generic baseline:
+The scaffolded distribution must ship as a clean, generic baseline:
 
 - `Scripts/Workers/Default.<ext>` is written for the harness chosen in
   interview question 5 (canonical `opencode` recipe in section 11.1 when
@@ -273,7 +274,7 @@ through. Each wrapper:
   text are inserted verbatim into the translated sentences and must not be
   altered.
 - Both translated sentences must be identical across every worker wrapper
-  shipped in this distributive and across every invocation; pick one
+  shipped in this distribution and across every invocation; pick one
   translation per sentence at scaffold time and reuse it.
 - Invokes the harness in CLI or TUI mode based on `--mode`.
 - Resolves the harness binary defensively. On Windows, if a direct lookup
@@ -673,7 +674,7 @@ Behavior:
 
   Each launcher invokes the dispatcher with `--worker Default`,
   `--prompt Prompts/<Agent>.md` (relative to the workspace; `<Agent>` means
-  the effective mapped prompt basename for that role when section-5.2
+  the effective mapped prompt basename for that role when section 5.2
   localization is enabled), `--workspace .`,
   `--mode tui`, and `--agent-name "<Agent>"`. On Windows, also pass
   `--new-window` so the worker wrapper can detach into a new console per
@@ -960,7 +961,7 @@ localized names, you may translate them, but you must:
 For all create/verify/cleanup checks in this specification, use the
 **effective manifest**:
 - start from the canonical list in section 7,
-- apply the section-5.2 name mapping table when localized names were
+- apply the section 5.2 name mapping table when localized names were
   chosen,
 - if no mapping is provided, the effective manifest is the canonical list.
 
@@ -1146,7 +1147,9 @@ Lifecycle:
 ## 7. File manifest
 
 Create exactly the files in the effective manifest (section 5.2 + this
-canonical list). Do not create more, do not skip any.
+canonical list). Do not create more, do not skip any, except optional
+additional worker wrappers under `Scripts/Workers/` that may be created by
+the `Installation Agent` in section 8.2 step 1.
 
 ### Root
 
@@ -1280,7 +1283,7 @@ agent collects the user's real setup choices on their own machine and
 updates the affected files to match.
 
 Guidance:
-- Goal: prepare this distributive so the next launch opens `Workspace Agent`
+- Goal: prepare this distribution so the next launch opens `Workspace Agent`
   instead of `Installation Agent`.
 - Rules: keep the prompt platform-agnostic; one question at a time; do not
   reconfigure `Scripts/Workers/Default` (it is already wired by the
@@ -1390,11 +1393,12 @@ Guidance:
        information (binary names, config paths, trigger conditions,
        which agent prompt should know about it). Apply each integration
        by editing the **existing** files that are responsible for that
-       behavior; do **not** invent new top-level files or new scripts
-       under `Scripts/` for an integration (the file manifest in
-      section 7, interpreted through the effective manifest rule in
-      section 5.2, is the upper bound on what may exist at workflow
-       root). Acceptable edit targets are:
+      behavior; do **not** invent new top-level files or new scripts
+      under `Scripts/` for an integration (the file manifest in
+          section 7, interpreted through the effective manifest rule in
+          section 5.2, is the upper bound on what may exist at workflow
+      root, except optional worker wrappers permitted in step 1).
+      Acceptable edit targets are:
        - any per-workspace prompt under
          `Workspaces/__template__/Prompts/` (e.g. add a "VS Code"
          section to `Worker Agent.md` describing when and how to open
@@ -1512,7 +1516,8 @@ Guidance:
   top-level launcher switched to `Workspace Agent`; any
   integration-related edits from step 6 applied to the existing files
   named in that step (no new files or scripts outside the section 7
-  manifest, interpreted through section 5.2). The scaffolder-provided
+  manifest, interpreted through section 5.2, except optional wrappers
+  created in step 1). The scaffolder-provided
   `Workspaces/__template__/Facts.md`
   stub (section 8.22) is left in place untouched by this agent.
 
@@ -2099,13 +2104,13 @@ def main():
   if not workspace: return 2
   target = workspaces_root / workspace
   if target.exists(): return 2
-    create_directory(target)
     repos = immediate_subdirs_with_git(template_root)
     for repo in repos:
         if not git_has_head(repo):  # git rev-parse --verify HEAD
             print_error(f"Repo {repo.name} has no HEAD commit. "
                         "Run `git commit --allow-empty -m init` in it and rerun.")
             return 2
+  create_directory(target)
     repos_names = {r.name for r in repos}
     for child in template_root.children:
         if child.name in repos_names: continue
@@ -2314,6 +2319,7 @@ Behavior:
 ```
 def main():
     args = parse()
+  workdir = resolve_workspace_cwd(args.workspace, cwd)
     bootstrap = "Read the file at '" + absolute(args.prompt) + \
                 "' and follow the instructions exactly."
     if args.tail and args.tail.strip():
@@ -2328,10 +2334,10 @@ def main():
     if args.dry_run:
         print(escape_for_shell(cmd)); return 0
     if args.new_window and args.mode == "tui" and is_windows():
-        spawn_detached_new_console(cmd, cwd=args.workspace or cwd)
+      spawn_detached_new_console(cmd, cwd=workdir)
         return 0
     try:
-        return subprocess_run(cmd, cwd=args.workspace or cwd).exit_code
+      return subprocess_run(cmd, cwd=workdir).exit_code
     except missing_binary:
         print_error("Could not start '<harness>'.")
         return 127
@@ -2446,7 +2452,7 @@ Notes:
   changes).
 - Per-workspace launchers use a relative prompt path (`Prompts/<Agent>.md`)
   and `--workspace "."`; `<Agent>` resolves to the effective mapped prompt
-  basename for that role when section-5.2 localization is enabled. The
+  basename for that role when section 5.2 localization is enabled. The
   launcher itself must change to its own directory first (`cd /d "%~dp0"`)
   so relative paths resolve from the workspace path.
 
@@ -2568,7 +2574,7 @@ from `claude --help` at scaffold time per interview question 5.
   runs Claude Code in non-interactive print mode).
 - TUI/interactive: `claude "<bootstrap>"` (positional initial prompt;
   starts the interactive session).
-- Context attach: Claude Code does not take ad-hoc file flags from the
+- Context attach: Claude Code does not take ad hoc file flags from the
   CLI; mention the files inside the bootstrap text or drop the
   `--context-files` hint.
 
@@ -2885,22 +2891,24 @@ Protocol:
 
 10. **Report.** Print a short summary listing each of steps 2-8 as PASS
     or FAIL with the exit code observed and any captured error. If any
-    step failed, leave the snapshot intact and tell the user where it
-    lives so they can inspect it manually; otherwise confirm the
-    workflow root is byte-equivalent to its post-scaffold state.
+  step failed, restore the workflow root from the snapshot and report
+  REHEARSAL FAIL. Keep the snapshot path in the report only if restore
+  itself fails; otherwise delete the snapshot and confirm the workflow
+  root is byte-equivalent to its post-scaffold state.
 
 The rehearsal is best-effort and additive: a failure here does **not**
-block handoff (the scaffolded distributive is still usable), but the
-failure details must be surfaced to the user.
+block handoff only when restore succeeded and the mandatory checklist still
+passes; failure details must always be surfaced to the user.
 
 ---
 
 ## 14. Final handoff
 
 When the verification checklist passes (and the optional rehearsal in
-section 13.5 has either completed successfully or been skipped per
-interview question 6), tell the user briefly, in the chosen language,
-that the distributive is ready and that opening the top-level launcher
+section 13.5 has completed successfully, or has been skipped, or has
+failed but was fully restored and re-verified), tell the user briefly, in
+the chosen language,
+that the distribution is ready and that opening the top-level launcher
 will start the `Installation Agent`. If the rehearsal ran, include a
 one-line PASS/FAIL summary. The same final handoff message must also remind
 the user that their harness may require a per-directory permissions/settings
