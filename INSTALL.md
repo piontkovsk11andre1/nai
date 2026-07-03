@@ -194,6 +194,29 @@ deferring it.
 After question 6, summarize the chosen configuration in one short message,
 then proceed to scaffolding (sections 6-12).
 
+Lightweight execution discipline (anti-drift, low-overhead):
+
+- Run scaffolding in five concise phases: (A) interview + resolved config,
+  (B) directory/manifest structure, (C) scripts + worker wrappers,
+  (D) prompts/templates/launchers, (E) full verification + cleanup.
+- At the end of each phase, run a short phase-local gate and stop on first
+  failure before continuing. Keep these gates in memory or transient process
+  state; do not create extra files.
+- Use a focused conformance set for high-risk invariants only:
+  dispatcher contract (4.1), runtime policy + locks (4.1a/9.0),
+  `Work - Do` reconciliation/finalization behavior (4.5/9.4),
+  `Work - Move` transition + token gate behavior (4.5a/9.5a), and launcher
+  report gating/path containment (10.0 and OS recipe).
+- Repair loop on failure: patch only the failed artifact/check, rerun impacted
+  checks, then continue. Maximum 2 repair attempts per failing check group;
+  if still failing, stop with a clear fail report naming phase, failed
+  invariant/check, and next action.
+- Controlled fallback is allowed only after one failed full pass: scaffold the
+  minimal runnable chain (top-level launcher, dispatcher, default worker,
+  policy utility, `Work - Do`, `Work - Move`, `Work - Undo`, template queue,
+  and top-level prompts), then complete remaining artifacts in a second pass
+  before handoff.
+
 Before the first scaffold write, record a baseline inventory of the workflow
 root (relative paths plus file/dir type). Use this baseline later in section
 13 step 0 so cleanup removes only artifacts created during this run. Keep the
@@ -3340,6 +3363,17 @@ Safety boundary for verification: every mutating or destructive check must run
 only inside scaffolder-created scratch paths and throwaway repositories created
 for this run. Never run mutating or destructive verification steps against
 pre-existing user repositories, pre-existing workspaces, or unknown paths.
+
+Verification execution order (compact anti-drift guard):
+
+- First replay phase-local gates from section 3 (A-E) and fix any failures
+  before running the full checklist below.
+- For each failing gate/check, use targeted repair (failed artifact scope
+  only), rerun impacted checks, then re-run the full checklist only after
+  impacted checks pass.
+- Maintain explicit coverage for the high-risk conformance set from section 3
+  (4.1, 4.1a/9.0, 4.5/9.4, 4.5a/9.5a, 10.0 + OS launcher recipe) in addition
+  to all checks listed below.
 
 0. **Cleanup pass.** Before running the remaining checks, walk the entire
    workflow root and identify every file or directory that is not part of
