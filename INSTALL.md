@@ -391,6 +391,14 @@ task-filename validation fails.
 Task files are plain UTF-8 markdown. Only workflow metadata frontmatter is
 machine-parsed; everything else is opaque task content.
 
+Schema versioning:
+
+- When a task file contains workflow metadata frontmatter, it must include
+  `workflow_schema: 1` at top level.
+- Unknown task schema values are hard errors (user/precondition error, exit
+  code 2) in queue-touching scripts.
+- Missing `workflow_schema` in legacy frontmatter is treated as schema `1`.
+
 - In `Next/`, tasks normally start without metadata frontmatter.
 - On `Next -> Current`, `Work - Move` prepends rollback metadata
   frontmatter (section 4.4).
@@ -402,6 +410,7 @@ Example task file as it appears in `Done/` after one verification run:
 
 ```
 ---
+workflow_schema: 1
 rollback:
   RepoA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   RepoB: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -435,6 +444,7 @@ metadata in YAML frontmatter at the top of the file in exactly this shape:
 
 ```
 ---
+workflow_schema: 1
 rollback:
   RepoNameA: <hash>
   RepoNameB: <hash>
@@ -450,6 +460,7 @@ rollback:
 
   ```
   ---
+  workflow_schema: 1
   rollback: {}
   ---
   ```
@@ -475,6 +486,7 @@ frontmatter for some reason, create one at the top of the file. Shape:
 
 ```
 ---
+workflow_schema: 1
 rollback:
   RepoNameA: <hash>
 blocked:
@@ -518,7 +530,9 @@ Invoked non-interactively with these arguments:
 - `--rehearse` (optional flag; run the same execution flow while passing
   `--dry-run` to harness invocations so no model call is made)
 - `--verifier-timeout <seconds>` (optional positive integer; when provided,
-  verifier dispatch must finish within this many seconds)
+  verifier dispatch must finish within this many seconds; default: no timeout)
+- `--finalization-token-ttl-seconds <seconds>` (optional positive integer,
+  default `7200`; no upper bound)
 - `--force-unlock` (optional flag; explicit workspace-lock recovery)
 
 Concurrency and lock rules:
@@ -569,8 +583,13 @@ Decision order on each invocation:
      store it in a workspace scratch JSON file, and include it in verifier
      instructions. Token validation is verifier-only and is enforced through
      `Work - Move` (section 4.5a). The token record is UTF-8 and contains at
-     least: `token`, `task_file_name`, `created_utc`, `expires_utc`
-     (optional/empty allowed), and `verification_output_file`.
+     least: `token`, `task_file_name`, `created_utc`, mandatory
+     `expires_utc`, and `verification_output_file`.
+     `expires_utc` is computed from `created_utc` plus
+     `--finalization-token-ttl-seconds` (default 7200 seconds). If
+     `--verifier-timeout` is provided, token TTL must be at least
+     `verifier-timeout + 300` seconds; otherwise exit with user/precondition
+     error before verifier dispatch. There is no maximum TTL cap.
      Invoke the dispatcher again with the verification worker and the verify
      prompt (`Prompts/Work - Verify.md` inside the workspace). The verifier
      tail is the current task body plus a short translated instruction naming
@@ -691,8 +710,8 @@ Behavior:
     `current -> blocked` and a verifier finalization token is active for the
     workspace, require `--finalization-token` and reject on mismatch. Validate
     against the active token JSON record in workspace scratch: provided token
-    equals `token`, source task equals `task_file_name`, and if `expires_utc`
-    is set then finalization time is not later than `expires_utc`.
+    equals `token`, source task equals `task_file_name`, and finalization time
+    is not later than mandatory `expires_utc`.
 6. If `--verification-output-file` is provided, read it as UTF-8 and append
   it to the task as a new section at EOF:
 
@@ -702,8 +721,15 @@ Behavior:
   <verbatim content>
   ```
 
-7. Move the task file by renaming from source directory to destination
-  directory, preserving the file name.
+7. Move the task file using transactional local-filesystem semantics:
+  - write transformed content to a temporary file in the destination
+    directory (same filesystem as final target),
+  - flush/fsync the temp file,
+  - atomically rename temp file to final destination path,
+  - remove the original source file only after successful destination
+    commit.
+  Fail fast if atomic rename cannot be guaranteed for the target path.
+  On such precondition failure, exit 2 with no queue mutation.
 
 Exit codes: 0 success, 2 user/precondition error.
 
@@ -1105,9 +1131,11 @@ Protocol literals that are **not translated** under any circumstances
 (they are machine-parsed tokens, not user-facing prose):
 
 - The task-metadata frontmatter keys from sections 4.4 and 4.4a:
-  `rollback`, `blocked`, `kind`, and `reason`. Keys and structure are
+  `workflow_schema`, `rollback`, `blocked`, `kind`, and `reason`. Keys and structure are
   fixed ASCII; only the embedded free-text reason value is in the chosen
   language.
+- Facts schema marker literal in section 8.22:
+  `Workflow Facts Schema: 1`.
 - Dispatcher / worker / `Work - *` CLI flag names (`--prompt`, `--mode`,
   `--workspace`, `--from`, `--to`, `--current-action restart|validate-only`,
   etc.). Their
@@ -2089,6 +2117,12 @@ Guidance:
   Mutating actions are always routed through policy-enforced workflow
   scripts (section 4.1a and 9.0); do not bypass them with ad hoc queue
   or workflow-state edits.
+  When triggering `Work - Do`, choose timeout values conservatively for
+  long-running builds/tests/verifications: `--verifier-timeout` has no default
+  and should be set only when an explicit cap is needed; avoid low values that
+  would interrupt valid long runs, and when needed set
+  `--finalization-token-ttl-seconds` high enough for the expected run
+  duration.
   Shared interaction behavior for switching, capability mismatch, and
   launcher-based opening follows sections 4.13a and 4.14.
 - After each task is verified and moved to `Work/Done/`, create a local git
@@ -2205,6 +2239,14 @@ copy on `Workspace - Create`.
 Format: an append-only sequence of timestamped level-2 entries. A
 normal answer entry is exactly:
 
+`Facts.md` begins with a required one-line schema marker before any
+entries:
+
+`Workflow Facts Schema: 1`
+
+Unknown Facts schema markers are hard errors for any script/tooling path
+that validates this file (user/precondition error, exit code 2).
+
 ```
 ## <Short Title>
 
@@ -2243,6 +2285,8 @@ produce minimal, line-stable diffs.
 
 - UTF-8 encoding, LF line endings, single trailing newline at EOF.
 - No trailing whitespace on any line.
+- Keep `Workflow Facts Schema: 1` as the first non-empty line; do not
+  localize or rewrite it.
 - Each entry is exactly one `## <Title>` heading line, one blank line,
   metadata lines, one blank line, the body, then one blank line before
   the next entry.
@@ -2567,6 +2611,9 @@ Implementation requirements:
   (`next -> current`) first.
 - Read/write task files as UTF-8.
 - Use metadata-frontmatter helpers compatible with section 4.4.
+- Validate task frontmatter schema per section 4.3a when frontmatter is
+  present: accept `workflow_schema: 1` and legacy-missing schema as `1`;
+  reject unknown schema values with user/precondition error (2).
 - Build repeated `--context-file` flags from existing workspace artifacts
   listed in section 4.5.
   **Never include `Facts.md`** in this list even when the
@@ -2584,9 +2631,13 @@ Implementation requirements:
 - `Work - Do` uses lock-aware critical sections from section 4.5 and supports
   `--force-unlock` for explicit lock recovery.
 - `Work - Do` creates a verifier token JSON record in workspace scratch for
-  each verifier run (`token`, `task_file_name`, `created_utc`, `expires_utc`,
-  `verification_output_file`) and passes only the opaque token via
+  each verifier run (`token`, `task_file_name`, `created_utc`, mandatory
+  `expires_utc`, `verification_output_file`) and passes only the opaque token via
   `--finalization-token` to verifier-driven `Work - Move` calls.
+- `Work - Do` supports `--finalization-token-ttl-seconds` (default 7200,
+  positive integer, no maximum). If `--verifier-timeout` is set, enforce
+  `finalization-token-ttl-seconds >= verifier-timeout + 300` before starting
+  verifier dispatch.
 
 Verification outcome handling:
 
@@ -2599,6 +2650,8 @@ Verification outcome handling:
   lock-protected queue reconciliation: if task is in `Done/`, return success;
   if in `Blocked/`, return 3; if still in `Current/`, return 3 with timeout
   error.
+- When `--verifier-timeout` is omitted, verifier dispatch has no timeout cap
+  from `Work - Do`.
 - Verifier dispatcher zero when neither `--dry-run` nor `--rehearse` is set ->
   verify that the active task was finalized by verifier through token-consistent
   `Work - Move`:
@@ -2635,6 +2688,9 @@ Behavior follows section 4.6 step by step. Provide:
   `Next/`.
 - Task-file rewrites and moves performed by undo must be policy-guarded via
   section 9.0.
+- `Work - Undo` validates task frontmatter schema per section 4.3a for tasks
+  it reads/mutates and fails with user/precondition error (2) on unknown
+  schema values.
 - `Work - Undo` acquires the workspace lock before preflight and mutation and
   releases it on every exit path; it supports `--force-unlock` for explicit
   lock recovery.
@@ -2677,8 +2733,12 @@ def main():
     out = read_utf8(args.verification_output_file)
     text = append_verification_section(text, out, utc_timestamp())
 
-  write_utf8(task, text)
-  move(task, queue_dir(ws, args.to_state) / task.name)
+  dest = queue_dir(ws, args.to_state) / task.name
+  temp = create_temp_in_directory(dest.parent, suffix=".tmp")
+  write_utf8(temp, text)
+  fsync_file(temp)
+  atomic_rename(temp, dest)  # fail fast if not guaranteed on this target
+  delete(task)
   release_workspace_lock(lock)
   return 0
 ```
@@ -2689,6 +2749,9 @@ Additional requirements:
 
 - `resolve_source_task` validates canonical task naming from section 4.3
   for every candidate considered in source queues.
+- `Work - Move` validates task frontmatter schema per section 4.3a for source
+  task content before transform/mutation and fails with user/precondition
+  error (2) on unknown schema values.
 - `--task` values that do not match canonical naming are rejected with
   exit code 2 before any file mutation, using the mandatory five-line
   filename-validation error format from section 4.3.
@@ -2705,12 +2768,15 @@ Additional requirements:
   it must not capture or replay worker/verifier stdout/stderr streams.
 - All task-file writes/appends/moves in `Work - Move` must use policy-guarded
   mutation helpers from section 9.0.
+- Queue transitions in `Work - Move` are transactional and local-filesystem
+  atomic as specified in section 4.5a; if atomic rename cannot be guaranteed,
+  fail fast with exit 2 before any queue mutation.
 - `Work - Move` acquires the workspace lock before queue validation and
   mutation and releases it on every exit path.
 - Add `--force-unlock` (optional flag) so lock recovery is explicit when a
   stale lock must be cleared manually.
 - `assert_finalization_token_if_active` validates against the active token
-  JSON record in workspace scratch (`token`, `task_file_name`, optional
+  JSON record in workspace scratch (`token`, `task_file_name`, mandatory
   `expires_utc`) and returns a user/precondition error on mismatch.
 
 Canonical invocation examples (paths shown as relative for readability):
@@ -3197,6 +3263,10 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
   are rejected with user/precondition errors across selection and move
   paths, and every such rejection uses the mandatory five-line
   filename-validation error format from section 4.3.
+  Also verify transactional queue-write semantics: destination content is
+  committed via temp-file + atomic rename in the destination directory, and
+  when atomic rename cannot be guaranteed the move fails fast with exit 2 and
+  no queue mutation.
 6. `Workspace - Remove` refuses to run without `--synced`.
 6a. `Workspace - Create` resilience check (including submodules): in a scratch
   template setup with at least one repo that has submodules, confirm create:
@@ -3235,6 +3305,11 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
      rejects missing or mismatched `--finalization-token` and accepts a
      matching token. Also confirm task-name mismatch and expired-token cases
      are rejected based on the active token JSON record.
+   - Token TTL control check: confirm `Work - Do` uses default
+     `--finalization-token-ttl-seconds=7200` when omitted, accepts explicit
+     positive overrides with no upper bound, and rejects values that violate
+     the minimum safety rule when `--verifier-timeout` is provided
+     (`ttl < verifier-timeout + 300`).
    - Timeout reconciliation check: force a verifier timeout at the boundary
      and confirm post-timeout reconciliation prefers finalized queue state
      (`Done/` or `Blocked/`) over raw timeout status; only unresolved
@@ -3260,7 +3335,8 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
     example entry (with `Recorded` and `Type` metadata), includes one
     correction example (`Type: correction` with `Corrects`), ends with a
     single trailing newline, and uses LF line endings with no trailing
-    whitespace (section 8.22).
+  whitespace (section 8.22). Confirm first non-empty line is the exact
+  marker `Workflow Facts Schema: 1`.
 
 10. `Work - Do` validates `Current/` as a singleton queue before restart or
   `validate-only` handling. Create a scratch workspace with two canonical task files
@@ -3328,8 +3404,9 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
 20. Protocol-literal immutability check: verify all generated artifacts keep
   protocol-critical machine tokens exactly as specified (section 5.1), with
   no localization or spelling drift. At minimum confirm:
-  - task frontmatter keys `rollback`, `blocked`, `kind`, and `reason`
+  - task frontmatter keys `workflow_schema`, `rollback`, `blocked`, `kind`, and `reason`
     are unchanged;
+  - Facts schema marker `Workflow Facts Schema: 1` is unchanged;
   - dispatcher / worker / `Work - *` CLI flag names and enum values remain
     ASCII and exact (for example `--prompt`, `--mode`, `--from`, `--to`,
     `--current-action`, `restart`, `validate-only`);
@@ -3363,6 +3440,8 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
     lock acquisition waits up to the configured timeout, contention exits with
     user/precondition error, and lock breaking is possible only through
     explicit `--force-unlock` flows;
+  - unknown task schema versions are rejected with user/precondition errors
+    before mutation by queue-touching scripts;
   - policy denials return user/precondition errors with actionable recovery.
 
 If any check fails, repair before handoff.
