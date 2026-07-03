@@ -487,9 +487,11 @@ blocked:
   - for `FAIL`: verifier-provided failure reason;
   - for `INVALID`: a fixed translated sentence stating invalid
     finalization (the verifier finished without finalizing via
-    `Work - Move`) when a caller explicitly classifies the block this way;
+    `Work - Move`) when a caller explicitly selects
+    `--reason-kind INVALID`;
   - for `DISPATCHER`: a fixed translated sentence stating verifier
-    dispatcher failure when a caller explicitly classifies the block this way.
+    dispatcher failure when a caller explicitly selects
+    `--reason-kind DISPATCHER`.
 - Reason precedence is deterministic: when a caller provides `--reason`,
   keep it (after one-line sanitization); when omitted, synthesize the
   fixed translated sentence for the selected kind.
@@ -2320,7 +2322,7 @@ def main():
         print_error("Prompt not found: " + args.prompt)
         return 2
     try:
-      worker_path = resolve_worker(args.worker)  # folder-restricted under dispatcher directory
+        worker_path = resolve_worker(args.worker)  # folder-restricted under dispatcher directory
     except invalid:
         print_error(...)
         return 2
@@ -2331,9 +2333,9 @@ def main():
     if args.tail:      cmd += ["--tail", args.tail]
     if args.agent_name:cmd += ["--agent-name", args.agent_name]
     if args.context_files:
-      normalized = normalize_csv_absolute(args.context_files)
-      if normalized:
-        cmd += ["--context-files", normalized]
+        normalized = normalize_csv_absolute(args.context_files)
+        if normalized:
+            cmd += ["--context-files", normalized]
     if args.dry_run:   cmd += ["--dry-run"]
     if args.new_window:cmd += ["--new-window"]
     return subprocess_run(cmd, stdout=inherit, stderr=inherit).exit_code
