@@ -1442,7 +1442,8 @@ Guidance:
 - Responsibilities:
   - create a workspace via `Workspace - Create`,
   - archive a workspace via `Workspace - Remove --synced`,
-  - **merge facts** on user request (see below),
+  - **preserve important facts/notes** on user request and before archival
+    (see below),
   - open per-workspace agents by resolving the user's agent name to the
     exact per-workspace launcher file via this fixed canonical role mapping
     (no fuzzy lookup). Explain which launcher you are opening and for which
@@ -1462,41 +1463,32 @@ Guidance:
     `Workspaces/<workspace>/<launcher-file>`. On Windows that means
     `Start-Process -FilePath "<absolute-launcher-path>"`. On other OSes
     invoke the launcher equivalently (see section 10).
-  - **Merge facts** procedure (on explicit user request, and offered
-    before archival per below):
-    1. Enumerate live workspaces: every immediate subdirectory of
-       `Workspaces/` whose name is **not** `__template__` and **not**
-       `__archive__`. Workspace names are single-segment by contract, so
-       recursive scanning is forbidden here. The `__archive__/` subtree is
-       never read or written by this procedure.
-    2. For each live workspace, read its `Facts.md` (skip silently if
-       the file is absent or empty).
-    3. Produce an updated `Workspaces/__template__/Facts.md` that
-       semantically merges new and corrected `## <Title>` sections from
-       the workspaces while honoring the version-control-friendly
-       editing rules in section 8.22:
-       - existing sections in the template keep their position; if a
-         workspace has a corrected version of a section with the same
-         title, edit only that section's body in the template; do not
-         reorder, retitle, or reflow surrounding sections;
-       - new titles found only in workspaces are appended to the end
-         of the template in the order discovered;
-       - never rename a section (titles are anchors); supersede with
-         a new section if a title must change.
-    4. After the template `Facts.md` is updated, **overwrite**
-       `Facts.md` in every live workspace (same set as step 1) with
-       the merged template content. The `__archive__` subtree is left
-       untouched.
-    5. Explain to the user what changed (which sections were added,
-       which were revised, which workspaces contributed) in plain
-       language. Do not commit, do not push.
+  - **Preserve important facts/notes** procedure (on explicit user
+    request, and offered before archival per below):
+    1. Ask one question: what is important to preserve before archiving
+       (facts, decisions, constraints, commands, follow-ups).
+    2. If the user says nothing should be preserved, continue without
+       writing anything.
+    3. If the user provides items, confirm the destination file for
+       each item when unclear. Destination files must be existing
+       workflow artifacts (for example workspace `Facts.md`,
+       `Notes.md`, `Backlog.md`, `Changelog.md`, or optionally
+       `Workspaces/__template__/Facts.md` for reusable template-level
+       notes).
+    4. Append each preserved item to the chosen destination file in that
+       file's native format. When the destination is `Facts.md`, use the
+       timestamped append-only entry format from section 8.22. Do not
+       rewrite or reorder existing entries.
+    5. Explain what was preserved and where. Do not commit, do not
+       push.
+  - There is no automatic cross-workspace Facts merge, no workspace-wide
+    Facts overwrite, and no global Facts reconciliation process.
   - **Before archival**: when the user asks to archive a workspace,
-    first ask one yes/no question -- "Merge facts from workspaces into
-    the template before archiving?" -- and run the merge procedure
-    above if the user accepts. Then proceed to `Workspace - Remove
-    --synced` regardless of the answer (declining the merge is not a
-    reason to skip archival). Never run the merge silently or without
-    confirmation.
+    first ask one question -- "What is important to preserve before
+    archiving? (Say 'none' to skip.)" -- and run the preservation
+    procedure above unless the user says none. Then proceed to
+    `Workspace - Remove --synced`. Never run preservation silently or
+    without confirmation.
 - Rules:
   - one question at a time, explicit confirmation for archive, no remote
     push,
@@ -1683,9 +1675,9 @@ append-only log:
   unrelated paragraphs when editing one section.
 - Confirmed durable facts that are likely to be re-used across tasks
   (project conventions, decisions, environment specifics) are recorded
-  by the Planner Agent in `Facts.md` (section 8.22). The Research Agent
-  may suggest a fact for `Facts.md` but does not append to it directly
-  unless the user explicitly confirms; that is the Planner's role.
+  in `Facts.md` as timestamped append-only entries (section 8.22).
+  The Research Agent may suggest entries and append them only when the
+  user explicitly confirms.
 
 ### 8.17 Template `Prompts/Planner Agent.md`
 
@@ -1697,13 +1689,14 @@ Guidance:
   `Work/Next/` (to see what is already queued). `Facts.md` exists in the
   workspace and is **searched on demand only** -- never read end-to-end
   and never preloaded. Before asking the user any question, search
-  `Facts.md` for a matching `## <Title>` section by keyword; if a
-  relevant section exists, treat its body as authoritative and skip
+  `Facts.md` for a matching `## <Title>` entry by keyword; if a
+  relevant entry exists, treat its body as authoritative and skip
   that question.
 - Outputs: `Plan`, `Status` (with the columns from section 4.9),
   `Work/Next/` (the initial set of actionable task files derived from the
-  plan), and **appended sections** in `Facts.md` recording confirmed
-  durable answers from the interview (see "Interview flow" below).
+  plan), and **appended timestamped entries** in `Facts.md` recording
+  confirmed durable answers from the interview (see "Interview flow"
+  below).
 - Interview flow (applies when the user invokes the Planner without
   specific instructions, e.g. just says "plan"):
   1. Read the inputs above (excluding `Facts.md` -- search-only).
@@ -1718,12 +1711,14 @@ Guidance:
      user to confirm or correct them, instead of asking each question
      in turn.
   5. Never re-ask something already recorded in `Facts.md`. Search
-     first by title or keyword; if the relevant section is present,
-     use it as the answer.
+     first by title or keyword; if relevant entries are present, use
+     the latest non-superseded answer (consider correction entries as
+     the source of truth).
   6. When the interview ends, append the confirmed durable answers to
-     `Facts.md` as one or more new `## <Title>` sections per the
-     append-only, VC-friendly rules in section 8.22. Do not edit
-     existing sections; do not rename or reorder anything. Skip
+     `Facts.md` as one or more new timestamped entries per the
+     append-only, VC-friendly rules in section 8.22. If an earlier
+     answer must be corrected, append a new correction entry that
+     references the corrected entry; do not edit existing entries. Skip
      answers that are ephemeral or task-local (those belong in `Plan`,
      `Notes`, or `Issue`, not in `Facts.md`).
 - Existing plan policy:
@@ -1774,7 +1769,7 @@ Guidance:
   workspace and is **searched on demand only** -- never read end-to-end
   and never preloaded. When a question about project conventions or
   prior decisions comes up, search `Facts.md` for a matching
-  `## <Title>` section by keyword and read only that section.
+  `## <Title>` entry by keyword and read only that entry.
 - Responsibilities: invoke `Work - Do`; resolve `Blocked`/`Current`
   decisions via explicit CLI arguments and `Work - Move`; invoke `Work - Undo` when
   rollback is requested; refine work toward 100% in `Status` or
@@ -1801,9 +1796,11 @@ Guidance:
 - When a durable, reusable fact is confirmed by the user during
   execution (a project convention, a decision, an environment detail
   worth carrying across tasks), append it to `Facts.md` as a new
-  `## <Title>` section per section 8.22. Only append on explicit user
-  confirmation; never edit or remove existing sections; ephemeral
-  task-specific notes go in `Notes` or `Plan`, not `Facts`.
+  timestamped entry per section 8.22. If a previously recorded fact is
+  wrong, append a correction entry that references the prior entry.
+  Only append on explicit user confirmation; never edit or remove
+  existing entries; ephemeral task-specific notes go in `Notes` or
+  `Plan`, not `Facts`.
 - Rules: one question at a time when clarifying; keep operations explicit
   and script-driven; workflow scripts live at workflow root `Scripts/`, not
   inside workspace directories (never propose creating `Work - Do` or
@@ -1845,7 +1842,7 @@ Guidance:
   `Facts.md` exists in the workspace but is **not auto-attached** to the
   dispatcher's `--context-files`; when a relevant project convention or
   prior decision is needed, search `Facts.md` for a matching
-  `## <Title>` section by keyword and read only that section.
+  `## <Title>` entry by keyword and read only that entry.
 - Required behavior:
   - apply changes scoped to the active task's intent;
   - report what was changed and what remains;
@@ -1888,23 +1885,38 @@ facts that the user explicitly confirms during execution
 is included in the per-workspace template so every workspace gets a
 copy on `Workspace - Create`.
 
-Format: an append-only sequence of level-2 sections. Each section is
-exactly:
+Format: an append-only sequence of timestamped level-2 entries. A
+normal answer entry is exactly:
 
 ```
 ## <Short Title>
 
+- Recorded: <UTC ISO-8601 timestamp>
+- Type: answer
+
 <body: paragraphs or bullet points>
 ```
 
-with one blank line between the heading and the body, and one blank
-line separating each section from the next. There is no automatic
-deduplication, no reordering, and no rewriting of existing sections by
-any agent except during the explicit Workspace-Agent-driven merge
-described in section 8.3.
+Correction entries use the same shape, but set `Type: correction` and
+add:
+
+```
+- Corrects: <title or Recorded timestamp of the corrected entry>
+```
+
+This keeps corrections obvious in history without rewriting the original
+entry. Use one blank line between heading and metadata, one blank line
+between metadata and body, and one blank line between entries. There is
+no automatic deduplication, no reordering, and no rewriting of existing
+entries.
+
+Global facts management is intentionally out of scope: there is no
+automatic cross-workspace merge and no global reconciliation. Any
+preservation into other docs (including optional template-level notes)
+is explicit and manual via section 8.3.
 
 Read pattern: agents must **search/grep** `Facts.md` for a relevant
-`## <Title>` or keyword and read only the matching section(s). They
+`## <Title>` or keyword and read only the matching entry/entries. They
 must not read the file end-to-end. `Facts.md` is intentionally
 excluded from the dispatcher's `--context-files` for the same reason
 (sections 4.5 and 9.4).
@@ -1914,27 +1926,24 @@ produce minimal, line-stable diffs.
 
 - UTF-8 encoding, LF line endings, single trailing newline at EOF.
 - No trailing whitespace on any line.
-- Each section is exactly one `## <Title>` heading line, one blank
-  line, the body, then one blank line before the next section.
+- Each entry is exactly one `## <Title>` heading line, one blank line,
+  metadata lines, one blank line, the body, then one blank line before
+  the next entry.
 - Hard-wrap soft prose at a reasonable width (~100 columns) so prose
   edits diff line-by-line. Do not reflow unrelated paragraphs when
-  editing a single section.
+  editing a single entry.
 - Appends touch only the tail of the file; existing bytes are
   unchanged.
-- The explicit Workspace-Agent merge (section 8.3) preserves the order
-  of unchanged sections; revisions edit only the affected section's
-  body and never reorder, retitle, or reflow surrounding sections.
-- Titles are stable identifiers: once a section is written, its
-  `## <Title>` line is the anchor used by merges and by on-demand
-  search. Do not rename a section in place; if a title must change,
-  supersede it with a new section appended at the end (the old
-  section can later be removed during a merge if it is genuinely
-  obsolete, but never silently retitled).
+- Titles are stable identifiers: once an entry is written, its
+  `## <Title>` line plus `Recorded` timestamp is the anchor used by
+  later correction entries and by on-demand search. Do not rename an
+  entry in place; supersede with a new correction entry appended at the
+  end.
 
 Stub content: one short introductory paragraph explaining the purpose,
-the append-only `## <Title>` format, and the search-only read rule,
-plus one example `## Example fact` section the user can replace or
-delete.
+the append-only timestamped format, the correction-entry pattern, and
+the search-only read rule, plus one example `## Example fact` entry and
+one example correction entry the user can replace or delete.
 
 ### 8.23 Template `Work/Next/`, `Work/Current/`, `Work/Blocked/`, `Work/Done/`
 
@@ -2556,9 +2565,11 @@ and report results.
    `log.txt` reads back as UTF-8.
 
 9. `Workspaces/__template__/Facts.md` exists and is non-empty, contains
-   the stub explanation and at least one `## <Title>` example section,
-   ends with a single trailing newline, and uses LF line endings with
-   no trailing whitespace (section 8.22).
+    the stub explanation and at least one timestamped `## <Title>`
+    example entry (with `Recorded` and `Type` metadata), includes one
+    correction example (`Type: correction` with `Corrects`), ends with a
+    single trailing newline, and uses LF line endings with no trailing
+    whitespace (section 8.22).
 
 10. `Work - Do` context-file selection excludes `Facts.md`. Create a
     scratch workspace, write a non-empty `Facts.md` next to the usual
@@ -2567,9 +2578,14 @@ and report results.
     contain `Facts.md` even though the file exists (sections 4.5, 4.11,
     9.4). Remove the scratch workspace in step 11.
 
+    Also verify the Workspace Agent prompt spec contains no automatic
+    cross-workspace Facts merge, no workspace-wide Facts overwrite, and
+    no global Facts reconciliation flow; preservation before archival is
+    user-directed and explicit (section 8.3).
+
 11. Post-check cleanup: remove any synthetic files and scratch workspaces
-  created by verification steps 5, 8, and 10 so the tree returns to the
-  post-scaffold state expected by step 0.
+    created by verification steps 5, 8, and 10 so the tree returns to the
+    post-scaffold state expected by step 0.
 
 12. In-chat role switching coverage in prompt specs: verify that all five
   per-workspace prompts (`Integration Agent`, `Research Agent`, `Planner

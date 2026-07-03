@@ -122,7 +122,7 @@ Workspaces/
     Assignments.md                  worker preference notes
     Backlog.md                      per-workspace backlog
     Changelog.md                    per-workspace changelog
-    Facts.md                        durable confirmed facts (append-only)
+    Facts.md                        durable confirmed facts (append-only, timestamped, correction entries)
     Framework.md                    navigation map + build/test/run/verify
     Issue.md                        structured task capture
     Notes.md                        free-form notes
@@ -222,11 +222,12 @@ A few things that make this different from "just prompting an agent":
   planning pass.
 - **Durable facts across tasks.** The Planner's interview appends
   confirmed answers (project conventions, decisions, environment
-  specifics) as `## <Title>` sections to `Facts.md`. Agents grep that
-  file on demand instead of re-asking the same questions in the next
-  task. The Workspace Agent can later merge facts from every live
-  workspace into the template and push the merged file back into each
-  live workspace; archived workspaces are left untouched.
+  specifics) as timestamped entries in `Facts.md`, and corrections are
+  appended as explicit correction entries instead of rewriting history.
+  Agents grep that file on demand instead of re-asking the same
+  questions in the next task. There is no automatic global facts merge:
+  before archival, the Workspace Agent asks what should be preserved and
+  appends those items explicitly to the chosen destination file.
 - **Workspace isolation via git worktrees.** Multiple workspaces can
   point at the same repos on different branches without stepping on
   each other.
