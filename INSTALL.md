@@ -39,7 +39,9 @@ Hard rules. Never violate.
   user's explicit decision.
 - Never permanently delete user workspace artifacts. Workspace removal archives
   non-repository artifacts and safely detaches or archives repository working
-  trees according to section 4.8.
+  trees according to section 4.8. Explicit exception: `Work - Undo` rollback
+  in section 4.6 is destructive by design and may erase dirty repository state
+  after its required preflight checks.
 - All workflow scripts that act on user state must be non-interactive: if a
   required CLI argument is missing for a decision, the script must exit
   non-zero with a clear message naming the exact argument(s) to add and rerun.
@@ -511,13 +513,17 @@ Decision order on each invocation:
      `--from current --to blocked --reason-kind DISPATCHER --reason "..."`
      where `--reason` is a concrete one-line translated sentence that
      includes the verifier dispatcher exit code `<N>`, then exit with the
-     verifier dispatcher's code.
+     verifier dispatcher's code. This fallback move must be checked: if
+     `Work - Move` itself exits non-zero, print a clear second error that
+     blocking failed and exit non-zero with the move failure code.
    - Otherwise, in non-dry-run mode validate post-verify state:
      - if the same task file now exists in `Work/Done/`: success;
      - if it now exists in `Work/Blocked/`: failure, exit code 3;
      - if it still exists in `Work/Current/`: treat as `INVALID`, invoke
        `Work - Move` with `--from current --to blocked --reason-kind INVALID`
-       and exit 3;
+       and exit 3 when the move succeeds; if the fallback move fails, print a
+       clear second error that blocking failed and exit non-zero with the
+       move failure code;
      - any other state is a precondition error and exits non-zero.
    - On success: print one short success line.
    - When `--dry-run` is set, skip verifier-output handling and do not enforce
@@ -571,6 +577,9 @@ Behavior:
   - if omitted for `current`, source must contain exactly one task file.
 3. Enforce destination constraints:
   - destination `current` must be empty.
+  - destination directory must not already contain a task with the same file
+    name; on collision, exit with a precondition error before any content
+    rewrite or filesystem mutation.
 4. Content transforms before move:
   - `next -> current`: capture repo hashes (section 4.4) and ensure
     rollback frontmatter exists;
@@ -625,7 +634,8 @@ Behavior:
 4. For each undone task, strip rollback and blocked-reason frontmatter fields and move
   the file to `Work/Next/` in original order.
 
-Destructive intent is by design: dirty working trees are erased.
+Destructive intent is by design: dirty working trees are erased. This is the
+only allowed destructive repository rollback behavior under section 1.
 
 ### 4.7 `Workspace - Create`
 
@@ -2424,7 +2434,10 @@ dispatcher with the appropriate prompt path and worker.
 
 The dispatcher is invoked with the project's interpreter for the chosen
 programming language (for example: `py` on Windows for Python, `python3` on
-macOS/Linux, `bash` for shell scripts, `node` for Node.js). On Windows,
+macOS/Linux, `bash` for shell scripts, `node` for Node.js). For Go-based
+distributions, launcher commands must invoke the dispatcher as
+`go run "<abs path to Scripts/Agent.go>"` (or an explicitly generated
+`Agent`/`Agent.exe` binary with equivalent arguments and behavior). On Windows,
 the launcher is a `.cmd` file that resolves the interpreter as described
 in section 10.1 before invoking the dispatcher.
 
@@ -2460,7 +2473,9 @@ Notes:
 - If the chosen programming language is not Python, keep the same `.cmd`
   launcher shape and working-directory semantics, but replace the Python
   detection block with the idiomatic runtime invocation for the chosen
-  language.
+  language. For Go on Windows, resolve `go` via `where go`; if missing,
+  emit a clear error and exit 127; when present, invoke
+  `go run "<abs path to Scripts/Agent.go>" ...`.
 - Top-level `Open Agent.cmd` uses an absolute prompt path to
   `Prompts/Installation Agent.md` initially. After installation switch it to
   `Prompts/Workspace Agent.md` (same launcher file, only the prompt path
@@ -2488,6 +2503,9 @@ exec "<interpreter>" "<abs path to Scripts/Agent.<ext>>" \
   --agent-name "<Agent Name>"
 ```
 
+For Go launchers, use `go run` semantics instead of a single interpreter
+token: `exec go run "<abs path to Scripts/Agent.go>" ...`.
+
 Make the file executable (`chmod +x`). For the top-level launcher omit the
 `--workspace` argument and use an absolute prompt path.
 
@@ -2501,6 +2519,9 @@ Exec=<interpreter> "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prom
 Path=<working directory>
 Terminal=true
 ```
+
+For Go launchers, set `Exec=go run "<abs path to Scripts/Agent.go>" ...`
+while preserving the same dispatcher arguments.
 
 Mark the file executable. Do not create any additional launcher or wrapper
 files on Linux unless they are explicitly listed in the effective manifest
@@ -2573,9 +2594,12 @@ examples follow.
 
 - CLI/unattended: `opencode run "<bootstrap>"`
 - TUI/interactive: `opencode --prompt "<bootstrap>"`
-- Context attach: for each path in `--context-files`, append
-  `--context <path>` to the command. If a build of opencode does not
-  recognize the flag, drop it or ignore silently.
+- Context attach: during scaffolding, detect support for the attach flag by
+  inspecting opencode help output (`opencode --help` and subcommand help as
+  needed) and record the result in the generated wrapper. At runtime, only
+  append `--context <path>` when support was detected. If invocation still
+  fails due to an unrecognized attach flag, retry exactly once without any
+  context flags and continue.
 
 Resolution: try `which opencode`. On Windows, npm installs leave shims under
 `%APPDATA%\npm\opencode.cmd`; fall back to that path before failing.
