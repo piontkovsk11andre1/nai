@@ -57,6 +57,9 @@ Hard rules. Never violate.
   consistently across every file and reference.
 - Do not create extra documentation files (changelogs, decisions logs,
   summaries) beyond those listed in the file manifest.
+- All mutating workflow scripts must enforce runtime file policy before any
+  write, move, rename, or delete operation. Policy is a pre-mutation gate,
+  not a post-mutation audit.
 - Behavioral parity on every item in section 4 (Invariants). No exceptions.
 - Free adaptation only on items in section 5 (Adaptation Surfaces).
 - Keep all output concise. Prefer short prose and bullet points.
@@ -86,7 +89,7 @@ Concretely, when you finish scaffolding:
    valid, and obey the contracts in section 9.
 4. All workflow paths required by the contracts are wired end to end:
    `Workspace - Create`, `Workspace - Remove` (archive), `Work - Do`,
-  `Work - Move`, `Work - Undo`, dispatcher (`Agent`), the active-prompt
+  `Work - Move`, `Work - Undo`, runtime policy (`Policy`), dispatcher (`Agent`), the active-prompt
   state file, and at least the
   `Default` worker wrapper.
 
@@ -268,6 +271,31 @@ Behavior:
 - Do no other interpretation. In particular, do not validate the workspace.
 - `--new-window` is forwarded verbatim to the worker; the dispatcher itself
   does not interpret it.
+
+### 4.1a Runtime file policy (`Policy`)
+
+Every mutating workflow script must enforce runtime file policy before touching
+the filesystem. This policy is file-boundary and operation-type only.
+
+Scope:
+- enforce by role/action/path (`write`, `append`, `move`, `delete`, `rename`);
+- enforce path containment under the expected workflow root and workspace root;
+- deny by default when a target path is outside the role allowlist;
+- apply equally to patch, append, or full rewrite operations;
+- full-file rewrites are normal and allowed when the target file is in
+  allowlist;
+- per-section policy is intentionally out of scope.
+
+Required behavior:
+- policy checks run before any mutation; denied operations must not change
+  bytes on disk;
+- all mutating scripts call shared policy helpers (section 9.0) instead of
+  ad hoc direct mutation guards;
+- error messages are recovery-oriented and include offending path, denied
+  operation, allowed scope hint, and exact next action;
+- keep confirmations minimal: only explicit destructive/critical gates already
+  required by this specification (for example `--force` undo rollback) prompt
+  for additional confirmation.
 
 ### 4.2 Worker wrapper contract
 
@@ -1113,6 +1141,7 @@ Prompts/
   Workspace Agent.md
 Scripts/
   Agent.<ext>                                     (dispatcher)
+  Policy.<ext>                                    (shared runtime file policy utility)
   Workspace - Create.<ext>
   Workspace - Remove.<ext>
   Work - Do.<ext>
@@ -1312,6 +1341,8 @@ the `Installation Agent` in section 8.2 step 1.
 ### Scripts
 
 - `Scripts/Agent.<ext>` - the dispatcher described in section 4.1 and 9.1.
+- `Scripts/Policy.<ext>` - shared runtime file policy utility used by mutating
+  scripts (section 4.1a and 9.0).
 - `Scripts/Workspace - Create.<ext>` - section 4.7 and 9.2.
 - `Scripts/Workspace - Remove.<ext>` - section 4.8 and 9.3.
 - `Scripts/Work - Do.<ext>` - section 4.5 and 9.4.
@@ -2031,6 +2062,9 @@ Guidance:
   (section 8.17). If `Work/Next/` is empty when the user asks the
   Worker to start, instruct the user to run the Planner Agent first
   (or, if they explicitly ask, hand off to planning before executing).
+  Mutating actions are always routed through policy-enforced workflow
+  scripts (section 4.1a and 9.0); do not bypass them with ad hoc queue
+  or workflow-state edits.
   Shared interaction behavior for switching, capability mismatch, and
   launcher-based opening follows sections 4.13a and 4.14.
 - After each task is verified and moved to `Work/Done/`, create a local git
@@ -2055,7 +2089,10 @@ Guidance:
   input, not output (do not edit `Plan` or seed/regenerate `Work/Next/`
   unless the user explicitly asks -- the canonical path for new tasks
   is through the Planner Agent). Keep status updates practical: what was
-  done, what remains, and what decision is needed next.
+  done, what remains, and what decision is needed next. If a policy denial
+  occurs, explain the denied target and continue via an allowed file target
+  or script path instead of asking for extra confirmation unless a
+  destructive gate in this spec requires it.
 
 ### 8.19 Template `Prompts/Reviewer Agent.md`
 
@@ -2084,10 +2121,13 @@ Guidance:
 - Required behavior:
   - apply changes scoped to the active task's intent;
   - report what was changed and what remains;
+  - full-file rewrites are acceptable for in-scope targets;
   - do not update workflow coordination files. Treat the following as
     read-only context during execution: `Status`, `Plan`, `Research`,
     `Notes`, `Assignments`, `Issue`, `PR`, `Changelog`, `Backlog`,
     `Facts`, and every file under `Work/`.
+  - when a mutation is needed, use policy-enforced workflow paths (section
+    4.1a and 9.0). Do not rely on post-hoc checks.
 - Output expectation: clear execution result focused on what was done, what
   remains, and, if blocked, the blocker and the suggested next action.
   In CLI invocations, this output is shown live and mirrored into
@@ -2212,6 +2252,82 @@ inside queue files.
 For each script: argument list, behavior, exit codes, side effects. Translate
 to the chosen programming language. Use plain standard-library code.
 
+### 9.0 `Policy`
+
+`Policy` is a shared utility imported by mutating workflow scripts. It is not
+an interactive prompt and does not replace existing script contracts; it
+enforces them pre-mutation.
+
+Required helpers:
+
+- `canonical(path)` -> absolute canonical path.
+- `is_within(path, root)` -> true only when canonical `path` is contained in
+  canonical `root`.
+- `allow(role, operation, target, workspace, workflow_root)` -> bool + reason.
+- `assert_allowed(role, operation, target, workspace, workflow_root)` -> exits
+  user/precondition error on deny with a clear recovery-oriented message.
+- `guarded_write_utf8(...)`, `guarded_append_utf8(...)`, `guarded_move(...)`,
+  `guarded_delete(...)` wrappers that call `assert_allowed` before mutation.
+
+Policy model:
+- file-boundary and operation-type only; no per-section policy;
+- deny by default;
+- full-file rewrite is a normal `write` operation;
+- patch-based edits are treated exactly as `write` to the final target path;
+- temporary scratch files are allowed only under explicit workflow scratch
+  locations.
+
+Minimum policy profile matrix (required baseline):
+- `workspace-create-script`:
+  - may create/write/move under `Workspaces/<name>/` while creating that
+    workspace;
+  - may create launcher files in that workspace;
+  - must not mutate outside `Workspaces/` except repository worktree attach
+    operations already required by this spec.
+- `workspace-remove-script`:
+  - may move/archive under `Workspaces/__archive__/` and remove/detach within
+    the targeted workspace path;
+  - must not mutate unrelated sibling workspaces.
+- `work-do-script`:
+  - may write workspace scratch outputs and invoke queue transitions only via
+    `Work - Move`;
+  - must not directly mutate queue state files as a substitute for
+    `Work - Move`.
+- `work-move-script`:
+  - exclusive owner for queue-file rewrites/moves under `Work/Next`,
+    `Work/Current`, `Work/Blocked`, `Work/Done`.
+- `work-undo-script`:
+  - may rewrite/move queue files and run destructive repo rollback only under
+    existing `--force` and snapshot preconditions.
+- `planner-agent` (when routed through script/tooling path):
+  - may write `Plan.md`, `Status.md`, `Work/Next/*.md`, and `Facts.md`.
+- `worker-agent` (when routed through script/tooling path):
+  - may write repository implementation files plus `Status.md`, `Notes.md`,
+    `Facts.md`;
+  - must not directly write queue state files.
+- `research-agent` (when routed through script/tooling path):
+  - may write `Research.md`, optional `Backlog.md`, and `Facts.md`.
+- `reviewer-agent` (when routed through script/tooling path):
+  - may write `PR.md`, `Changelog.md`, optional `Status.md`, `Notes.md`,
+    `Backlog.md`.
+- `integration-agent` (when routed through script/tooling path):
+  - may write workspace `Issue.md`, `PR.md`, `Backlog.md`, `Changelog.md` and
+    global `Workspaces/Backlog.md`, `Workspaces/Changelog.md` through explicit
+    workflow actions.
+
+Required denial message shape:
+
+```
+Error: policy denied filesystem mutation.
+Role: <role>
+Operation: <operation>
+Target: <path>
+Allowed scope: <short allowlist hint>
+Action: use an allowed target or the owning workflow script, then retry.
+```
+
+Exit codes for policy denial: user/precondition error (`2`) with no mutation.
+
 ### 9.1 Dispatcher (`Agent`)
 
 Inputs: as in section 4.1.
@@ -2324,6 +2440,8 @@ Helpers for submodule-safe create:
   verifies every declared `path` exists after update; otherwise fail create.
 - `best_effort_remove_tree(path)` removes a partially created workspace on
   failure without touching any path outside the workspace target.
+- Every create-path filesystem mutation must be policy-guarded via section 9.0
+  before execution.
 
 ### 9.3 `Workspace - Remove` (archive)
 
@@ -2379,6 +2497,8 @@ Helpers:
 - `git_worktree_remove(primary, repo, force)`: run
   `git -C <primary> worktree remove <repo> [--force]`.
 - `git_worktree_prune(primary)`: run `git -C <primary> worktree prune`.
+- Every archive-path filesystem mutation must be policy-guarded via section 9.0
+  before execution.
 
 Exit codes: 0 success, 2 user/precondition error (missing `--synced`,
 reserved path, missing source, dirty repos without `--include-uncommitted`),
@@ -2409,6 +2529,8 @@ Implementation requirements:
   events `work-do.execute` and `work-do.verify` respectively.
 - Do not capture worker/verifier output for protocol parsing; workflow
   decisions rely on exit codes, queue state, and `Work - Move` results.
+- Any filesystem mutation performed directly by `Work - Do` (for example
+  scratch verification output paths) must be policy-guarded via section 9.0.
 
 Verification outcome handling:
 
@@ -2447,6 +2569,8 @@ Behavior follows section 4.6 step by step. Provide:
 - Sort `Done/` task files by workload identifier rule from section 4.6.
 - Strip rollback/blocked frontmatter fields before moving undone task files back to
   `Next/`.
+- Task-file rewrites and moves performed by undo must be policy-guarded via
+  section 9.0.
 
 The implementation must refuse to run destructive rollback without `--force`,
 even when the preflight report is clean. The refusal must happen before any
@@ -2507,6 +2631,8 @@ Additional requirements:
     translated reason.
 - `Work - Move` logging records workflow decisions and file operations only;
   it must not capture or replay worker/verifier stdout/stderr streams.
+- All task-file writes/appends/moves in `Work - Move` must use policy-guarded
+  mutation helpers from section 9.0.
 
 Canonical invocation examples (paths shown as relative for readability):
 
@@ -2597,6 +2723,9 @@ It exposes one function:
   `[YYYY-MM-DD HH:MM:SS] <event>: <message>\n` to `<workspace>/log.txt`
   (UTF-8). Any I/O failure is swallowed silently; logging must never break a
   workflow script.
+
+  `Policy` denials and decisions may be logged as breadcrumbs, but policy
+  logging failures must never bypass or disable policy enforcement.
 
   For worker/verifier sessions in `Work - Do`, callers write one log line per
   streamed output line using this same function (for example message prefixes
@@ -3110,6 +3239,15 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
 23. No-implicit-push safety check: verify generated prompts and script
   guidance never perform `git push` automatically; push operations must
   require explicit user request.
+
+24. Runtime policy enforcement check: verify mutating scripts enforce section
+  4.1a/9.0 pre-mutation checks at file boundary and operation type. Confirm:
+  - allowed in-scope writes/moves succeed;
+  - out-of-scope targets are denied before mutation;
+  - path escape attempts (`..`, absolute out-of-root targets) are denied;
+  - patch and full rewrite paths are treated uniformly as `write` to the
+    final target;
+  - policy denials return user/precondition errors with actionable recovery.
 
 If any check fails, repair before handoff.
 
