@@ -306,7 +306,8 @@ directories: `Next/`, `Current/`, `Blocked/`, `Done/`.
 - Each task is stored as a separate markdown file.
 - Canonical task-file naming is `w-0001. Short title.md`:
   - `w-` prefix,
-  - zero-padded numeric identifier (`0001`, `0002`, ...),
+  - decimal numeric identifier left-padded to a **minimum** of 4 digits
+    (`0001`, `0002`, ..., `9999`, `10000`, ...),
   - dot-space separator,
   - short human-readable title,
   - `.md` extension.
@@ -315,7 +316,8 @@ directories: `Next/`, `Current/`, `Blocked/`, `Done/`.
 - Task movement must preserve unaffected task-file bytes.
 - Queue filename invariant: every task file in `Next/`, `Current/`,
   `Blocked/`, and `Done/` must match canonical naming
-  `w-<zero-padded-id>. <title>.md`. Scripts that select or move tasks
+  `w-<id>. <title>.md` where `<id>` is a decimal integer encoded with at
+  least 4 digits (zero-padded when needed). Scripts that select or move tasks
   must validate this and fail fast with a clear user/precondition error
   naming any offending file.
 
