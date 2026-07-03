@@ -1937,6 +1937,12 @@ Guidance:
   - if normalized workspace becomes empty or intent is genuinely ambiguous,
     ask exactly one short clarification question; otherwise execute directly,
   - archive a workspace via `Workspace - Remove --synced`,
+  - for every archive call, resolve the target workspace name explicitly and
+    pass it as `--workspace <name>`; `Workspace - Remove` has **no**
+    current-directory or `.` fallback,
+  - archive confirmation and execution must both show the explicit workspace
+    argument (for example:
+    `Scripts/Workspace - Remove --workspace feature-initial-commit --synced`),
   - **preserve important facts/notes** on user request and before archival
     (see below),
   - open per-workspace agents by resolving the user's agent name to the
@@ -1996,6 +2002,8 @@ Guidance:
     workspace-creation requests, derive values and execute without extra
     confirmation,
   - explicit confirmation for archive, no remote push,
+  - never invoke `Workspace - Remove` without `--workspace`; do not reuse
+    `Work - Do` / `Work - Move` optional-workspace behavior,
   - resolve "open <agent>" requests against the currently discussed
     workspace unless the user names a different one,
   - do not run broad file searches for scripts or launchers; use
@@ -2235,6 +2243,12 @@ Guidance:
     a single, self-contained unit
     of execution scoped tightly enough that a Worker can act on it
     without further planning.
+  - Task filenames created by Planner must be canonical and must match
+    `w-<id>. <title>.md` with zero-padded decimal id width >= 4 (for example
+    `w-0001. Bootstrap monorepo skeleton.md`, `w-0002. Add CI checks.md`).
+  - Never create date-based or level-based queue filenames (for example
+    `2026-07-03-design-l1-...md`); those are non-canonical and will be
+    rejected by queue scripts.
   - If `Work/Next/` already has actionable task files, do not regenerate
     them unless the user explicitly asks; offer to append additional
     tasks instead.
