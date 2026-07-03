@@ -40,10 +40,10 @@ Hard rules. Never violate.
 - All workflow scripts that act on user state must be non-interactive: if a
   required CLI argument is missing for a decision, the script must exit
   non-zero with a clear message naming the exact argument(s) to add and rerun.
-- Missing-argument diagnostics are standardized across scripts: report the
-  exact canonical flag token(s) that are missing (for example `--synced`,
-  `--blocked-action`), include allowed values when the argument is an enum,
-  and return exit code `2` for user/precondition errors.
+- Before scaffolding writes any manifest path, run a workflow-root collision
+  preflight against the effective manifest. If any target path already exists,
+  stop and ask for explicit overwrite confirmation in one yes/no question.
+  Default is no. If the user declines, abort without changing files.
 - Never invent file or directory names beyond what this spec defines. If the
   user requests localized names, you may translate them, but you must record
   the mapping in the file-name mapping table described in section 5.2 and apply it
@@ -121,6 +121,9 @@ deferring it.
 
 4. **Workflow root path.** Absolute path where the workflow should be
    installed. Default: the current working directory.
+
+  After this answer and before writing files, run the collision preflight from
+  section 1 against the effective manifest rooted at this path.
 
 5. **AI tool for the `Default` worker.** Which command-line AI tool should
    `Scripts/Workers/Default.<ext>` use? Default: `opencode`
