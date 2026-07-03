@@ -578,9 +578,12 @@ Invoked non-interactively with these arguments:
 
 Behavior:
 
-1. Read task files from `Work/Done/`. Sort by completion chronology:
-  primary key file modified time (oldest to newest), tie-breaker lexical
-  file name. Take the last `min(N, len(done))` tasks as the undo set.
+1. Read task files from `Work/Done/`. Sort by workload identifier parsed
+  from canonical file-name prefix `w-<digits>. ` (ascending numeric order),
+  tie-breaker lexical file name. If a file in `Done/` does not match the
+  canonical prefix, treat it as a precondition error and exit non-zero with
+  a clear message naming the offending file. Take the last
+  `min(N, len(done))` tasks as the undo set.
 2. Preflight: for every rollback entry across the undo set, verify the target
    commit exists in the corresponding repository. If any check fails, exit
    non-zero before making any changes.
@@ -1770,10 +1773,11 @@ Guidance:
      the answer" or "propose options". The Planner then researches or
      reasons about the question itself and proposes one or more options
      for the user to confirm or correct.
-  4. For questions whose answer is obvious or low-risk, the Planner may
-     proactively offer its own answers in a short batch and ask the
-     user to confirm or correct them, instead of asking each question
-     in turn.
+    4. For questions whose answer is obvious or low-risk, the Planner may
+      proactively offer its own answers in a short batch and ask the
+      user to confirm or correct them **only when the user explicitly
+      asks for batched questions or batched confirmation**; otherwise keep
+      strict one-question-at-a-time flow.
   5. Never re-ask something already recorded in `Facts.md`. Search
      first by title or keyword; if relevant entries are present, use
      the latest non-superseded answer (consider correction entries as
@@ -2210,7 +2214,7 @@ Behavior follows section 4.6 step by step. Provide:
 - `git_commit_exists(repo, hash)` via `git cat-file -e <hash>^{commit}`.
 - `git_reset_hard(repo, hash)` via `git reset --hard <hash>`.
 - `git_clean_fdx(repo)` via `git clean -fdx`.
-- Sort `Done/` task files by completion chronology rule from section 4.6.
+- Sort `Done/` task files by workload identifier rule from section 4.6.
 - Strip rollback/blocked frontmatter fields before moving undone task files back to
   `Next/`.
 
