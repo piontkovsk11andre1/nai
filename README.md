@@ -114,7 +114,7 @@ Prompts/
   Installation Agent.md
   Workspace Agent.md
 Scripts/
-  Agent.<ext>                       dispatcher
+  Dispatcher.<ext>                  dispatcher
   Policy.<ext>                      shared runtime file policy utility
   Workspace - Create.<ext>
   Workspace - Remove.<ext>
@@ -185,7 +185,7 @@ You have several equally valid entry points, pick whichever fits:
   status bar buttons, a side panel, …) for the editor you use.
 - **From a pipeline.** Every entry point under `Scripts/` is
   non-interactive by design — including the agent dispatcher itself.
-  `Scripts/Agent --worker Default --prompt <path/to/role-prompt.md> --workspace <ws> --mode cli --tail <text> --agent-name <name> --context-file <path> [repeat] --dry-run --new-window`
+  `Scripts/Dispatcher --worker Default --prompt <path/to/role-prompt.md> --workspace <ws> --mode cli --tail <text> --agent-name <name> --context-file <path> [repeat] --dry-run --new-window`
   runs any of the five roles unattended (the harness is invoked in its
   non-interactive mode: `opencode run`, `claude -p`, etc.) and returns
   an exit code. Missing a decision flag on any script exits non-zero

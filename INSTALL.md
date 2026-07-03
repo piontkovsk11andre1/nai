@@ -87,7 +87,7 @@ Concretely, when you finish scaffolding:
    valid, and obey the contracts in section 9.
 4. All workflow paths required by the contracts are wired end to end:
    `Workspace - Create`, `Workspace - Remove` (archive), `Work - Do`,
-  `Work - Move`, `Work - Undo`, runtime policy (`Policy`), dispatcher (`Agent`),
+  `Work - Move`, `Work - Undo`, runtime policy (`Policy`), dispatcher (`Dispatcher`),
   launcher gating via installation report presence, and at least the
   `Default` worker wrapper.
 
@@ -255,7 +255,7 @@ OS, or programming language. You may translate the prose and file names per
 the adaptation rules in section 5, but the behavior, argument names, separators,
 and metadata formats must match.
 
-### 4.1 Dispatcher script (`Agent`)
+### 4.1 Dispatcher script (`Dispatcher`)
 
 A thin transport layer with this CLI:
 
@@ -1274,7 +1274,7 @@ Prompts/
   Installation Agent.md
   Workspace Agent.md
 Scripts/
-  Agent.<ext>                                     (dispatcher)
+  Dispatcher.<ext>                                (dispatcher)
   Policy.<ext>                                    (shared runtime file policy utility)
   Workspace - Create.<ext>
   Workspace - Remove.<ext>
@@ -1378,7 +1378,7 @@ Requirements regardless of language:
     downstream tool calls (typical symptom: harness output shows `?`
     characters instead of accented letters). Every script that spawns a
     subprocess on Windows -- at minimum the dispatcher
-    (`Scripts/Agent.<ext>`) and every worker wrapper under
+    (`Scripts/Dispatcher.<ext>`) and every worker wrapper under
     `Scripts/Workers/` -- must set both the input and output console
     code pages to 65001 (UTF-8) at startup, before any subprocess is
     launched. In Python this is:
@@ -1485,7 +1485,7 @@ the `Installation Agent` in section 8.2 step 1.
 
 ### Scripts
 
-- `Scripts/Agent.<ext>` - the dispatcher described in section 4.1 and 9.1.
+- `Scripts/Dispatcher.<ext>` - the dispatcher described in section 4.1 and 9.1.
 - `Scripts/Policy.<ext>` - shared runtime file policy utility used by mutating
   scripts (section 4.1a and 9.0).
 - `Scripts/Workspace - Create.<ext>` - section 4.7 and 9.2.
@@ -1583,7 +1583,7 @@ in any order:
   initial note that `Installation Report.md` is absent; the Installation Agent
   creates `Installation Report.md` with timestamped completion details after
   user confirmation.
-- The dispatcher contract (the canonical flags of `Scripts/Agent.<ext>`).
+- The dispatcher contract (the canonical flags of `Scripts/Dispatcher.<ext>`).
 - The work-queue directory set (`Next/`, `Current/`, `Blocked/`, `Done/`) and
   task-file naming convention.
 - A short note on verifier finalization reliability: normal task finalization
@@ -1817,8 +1817,8 @@ Guidance:
        same two translated bootstrap sentences as `Scripts/Workers/Default`
        (section 4.2). Any drift in those sentence literals is repaired
        before proceeding.
-    - Dispatcher smoke test before creating the installation report: invoke
-       `Scripts/Agent.<ext>` with
+     - Dispatcher smoke test before creating the installation report: invoke
+       `Scripts/Dispatcher.<ext>` with
        `--worker Default --prompt <abs Installation Agent path> --mode cli
        --dry-run` and confirm it prints a harness command without error.
     - Harness binary liveness check before creating the installation report:
@@ -2558,7 +2558,7 @@ Action: use an allowed target or the owning workflow script, then retry.
 
 Exit codes for policy denial: user/precondition error (`2`) with no mutation.
 
-### 9.1 Dispatcher (`Agent`)
+### 9.1 Dispatcher (`Dispatcher`)
 
 Inputs: as in section 4.1.
 
@@ -3085,8 +3085,8 @@ The dispatcher is invoked with the project's interpreter for the chosen
 programming language (for example: `py` on Windows for Python, `python3` on
 macOS/Linux, `bash` for shell scripts, `node` for Node.js). For Go-based
 distributions, launcher commands must invoke the dispatcher as
-`go run "<abs path to Scripts/Agent.go>"` (or an explicitly generated
-`Agent`/`Agent.exe` binary with equivalent arguments and behavior). On Windows,
+`go run "<abs path to Scripts/Dispatcher.go>"` (or an explicitly generated
+`Dispatcher`/`Dispatcher.exe` binary with equivalent arguments and behavior). On Windows,
 the launcher is a `.cmd` file that resolves the interpreter as described
 in section 10.1 before invoking the dispatcher.
 
@@ -3145,7 +3145,7 @@ echo(%PROMPT_PATH%| findstr /i /b /c:"%PROMPTS_ROOT%" >nul || (
   >&2 echo Selected prompt must be under Prompts/: %PROMPT_PATH%
   exit /b 2
 )
-call "%PYTHON_CMD%" "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "%PROMPT_PATH%" --mode tui --agent-name "Open Agent" --new-window
+call "%PYTHON_CMD%" "<abs path to Scripts/Dispatcher.<ext>>" --worker "Default" --prompt "%PROMPT_PATH%" --mode tui --agent-name "Open Agent" --new-window
 exit /b %ERRORLEVEL%
 ```
 
@@ -3158,7 +3158,7 @@ Notes:
   detection block with the idiomatic runtime invocation for the chosen
   language. For Go on Windows, resolve `go` via `where go`; if missing,
   emit a clear error and exit 127; when present, invoke
-  `go run "<abs path to Scripts/Agent.go>" ...`.
+  `go run "<abs path to Scripts/Dispatcher.go>" ...`.
 - Top-level `Open Agent.cmd` checks `Installation Report.md` presence and
   selects prompt accordingly. The launcher file is static; installation state
   changes by creating/removing the report, not by rewriting launcher.
@@ -3200,7 +3200,7 @@ case "$prompt_path" in
   "$(pwd)/Prompts/"*) ;;
   *) printf '%s\n' "Selected prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;;
 esac
-exec "<interpreter>" "<abs path to Scripts/Agent.<ext>>" \
+exec "<interpreter>" "<abs path to Scripts/Dispatcher.<ext>>" \
   --worker "Default" \
   --prompt "$prompt_path" \
   --mode tui \
@@ -3213,7 +3213,7 @@ Per-workspace launcher:
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-exec "<interpreter>" "<abs path to Scripts/Agent.<ext>>" \
+exec "<interpreter>" "<abs path to Scripts/Dispatcher.<ext>>" \
   --worker "Default" \
   --prompt "<prompt path>" \
   --workspace "." \
@@ -3222,7 +3222,7 @@ exec "<interpreter>" "<abs path to Scripts/Agent.<ext>>" \
 ```
 
 For Go launchers, use `go run` semantics instead of a single interpreter
-token: `exec go run "<abs path to Scripts/Agent.go>" ...`.
+token: `exec go run "<abs path to Scripts/Dispatcher.go>" ...`.
 
 Make the file executable (`chmod +x`).
 
@@ -3234,7 +3234,7 @@ Top-level launcher:
 [Desktop Entry]
 Type=Application
 Name=Open Agent
-Exec=sh -c 'if [ -f "$1/Installation Report.md" ]; then prompt_path="$1/Prompts/Workspace Agent.md"; else prompt_path="$1/Prompts/Installation Agent.md"; fi; if [ ! -f "$prompt_path" ]; then printf "%s\n" "Selected prompt not found: $prompt_path" >&2; exit 2; fi; case "$prompt_path" in "$1/Prompts/"*) ;; *) printf "%s\n" "Selected prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;; esac; exec <interpreter> "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "$prompt_path" --mode tui --agent-name "Open Agent"' sh "<workflow root>"
+Exec=sh -c 'if [ -f "$1/Installation Report.md" ]; then prompt_path="$1/Prompts/Workspace Agent.md"; else prompt_path="$1/Prompts/Installation Agent.md"; fi; if [ ! -f "$prompt_path" ]; then printf "%s\n" "Selected prompt not found: $prompt_path" >&2; exit 2; fi; case "$prompt_path" in "$1/Prompts/"*) ;; *) printf "%s\n" "Selected prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;; esac; exec <interpreter> "<abs path to Scripts/Dispatcher.<ext>>" --worker "Default" --prompt "$prompt_path" --mode tui --agent-name "Open Agent"' sh "<workflow root>"
 Path=<workflow root>
 Terminal=true
 ```
@@ -3248,12 +3248,12 @@ Per-workspace launcher:
 [Desktop Entry]
 Type=Application
 Name=<launcher label>
-Exec=<interpreter> "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "<prompt path>" --workspace "<workspace path or omit>" --mode tui --agent-name "<Agent Name>"
+Exec=<interpreter> "<abs path to Scripts/Dispatcher.<ext>>" --worker "Default" --prompt "<prompt path>" --workspace "<workspace path or omit>" --mode tui --agent-name "<Agent Name>"
 Path=<working directory>
 Terminal=true
 ```
 
-For Go launchers, set `Exec=go run "<abs path to Scripts/Agent.go>" ...`
+For Go launchers, set `Exec=go run "<abs path to Scripts/Dispatcher.go>" ...`
 while preserving the same dispatcher arguments.
 
 Mark the file executable. Do not create any additional launcher or wrapper
@@ -3818,7 +3818,7 @@ anything to any remote. Stop.
 - **Worker** - a logical concept: the AI session that does the work.
 - **Worker wrapper** - a script under `Scripts/Workers/` that knows how to
   invoke a specific AI harness with a bootstrap string.
-- **Dispatcher** (`Agent` script) - the single entry point through which all
+- **Dispatcher** (`Dispatcher` script) - the single entry point through which all
   launchers and scripts spawn worker wrappers.
 - **Bootstrap** - the short text the dispatcher passes to a worker wrapper,
   which the worker wrapper passes to its harness; tells the AI to read a
