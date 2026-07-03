@@ -521,11 +521,14 @@ Decision order on each invocation:
   precondition error because `Current/` is a singleton queue.
 
 2. If `Current` is empty:
+   - If `Blocked` is non-empty, validate `Work/Blocked/` task filenames against
+     section 4.3 and exit with code 2 and a clear message instructing the
+     caller to resolve blocked work first via `Work - Move`.
    - If `Next` is non-empty, validate `Work/Next/` task filenames against
-     section 4.3 and exit non-zero with a clear message instructing the
+     section 4.3 and exit with code 2 with a clear message instructing the
      caller to run `Work - Move --from next --to current` first.
-   - If `Next` is empty, print a single line indicating there is no current
-     task to execute and exit 0.
+   - If both `Blocked` and `Next` are empty, print a single line indicating
+     there is no current task to execute and exit 0.
 
 3. Execution and verification on the existing current task:
   - Build a tail string equal to the current task body (metadata
@@ -2477,8 +2480,11 @@ Implementation requirements:
 - Validate discovered `Work/Current/` task filenames against canonical naming
   from section 4.3 before action; fail fast on mismatch using the mandatory
   five-line filename-validation error format from section 4.3.
+- If `Current/` is empty and `Blocked/` is non-empty, validate `Blocked/`
+  filenames and exit code 2 with a clear message to resolve blocked tasks via
+  `Work - Move` first.
 - If `Current/` is empty and `Next/` is non-empty, validate `Next/` filenames
-  and exit with a clear message instructing the caller to run `Work - Move`
+  and exit code 2 with a clear message instructing the caller to run `Work - Move`
   (`next -> current`) first.
 - Read/write task files as UTF-8.
 - Use metadata-frontmatter helpers compatible with section 4.4.
@@ -2511,6 +2517,11 @@ Verification outcome handling:
 
 Exit codes: 0 success, 2 user/precondition error, 3 verification failure,
 dispatcher's exit code on worker failure.
+
+Current-empty outcome mapping (required):
+- `Current` empty + `Blocked` non-empty -> exit 2;
+- `Current` empty + `Next` non-empty -> exit 2;
+- `Current` empty + `Blocked` empty + `Next` empty -> exit 0.
 
 ### 9.5 `Work - Undo`
 
@@ -3083,6 +3094,9 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
    - it requires exactly one canonical task file in `Work/Current/`;
    - it refuses to auto-promote from `Next/` and instead instructs using
      `Work - Move --from next --to current`;
+  - with `Current/` empty and `Next/` non-empty it exits with code 2;
+  - with `Current/` empty and `Blocked/` non-empty it exits with code 2;
+  - with both `Current/` and `Next/` and `Blocked/` empty it exits 0;
    - it performs no queue transitions itself.
    - Dry-run state check: with a task in `Work/Current/`, run `Work - Do
      --dry-run` and confirm no queue file bytes or repository state changed.
