@@ -77,20 +77,18 @@ to finalize the installation on their own machine.
 Concretely, when you finish scaffolding:
 
 1. A single top-level launcher (script, command, or desktop entry)
-  exists and is configured to read `Current Prompt.txt`, then open an AI
-  agent with the prompt named there. This is the state you leave behind.
-  `Current Prompt.txt` initially points to the `Installation Agent` prompt.
-  You do **not** switch the active prompt to the `Workspace Agent` prompt
-  at any point; that switch is performed later by the `Installation Agent`
-  itself, after the user runs the launcher and completes its checklist.
+  exists and is configured to select top-level prompt by filesystem artifact:
+  if `Installation Report.md` exists at workflow root, open
+  `Workspace Agent`; otherwise open `Installation Agent`. This is the state
+  you leave behind.
 2. A `Workspaces/__template__` directory exists with all per-workspace
    artifacts and per-agent launchers as stubs.
 3. All scripts in the chosen programming language are present, syntactically
    valid, and obey the contracts in section 9.
 4. All workflow paths required by the contracts are wired end to end:
    `Workspace - Create`, `Workspace - Remove` (archive), `Work - Do`,
-  `Work - Move`, `Work - Undo`, runtime policy (`Policy`), dispatcher (`Agent`), the active-prompt
-  state file, and at least the
+  `Work - Move`, `Work - Undo`, runtime policy (`Policy`), dispatcher (`Agent`),
+  launcher gating via installation report artifact, and at least the
   `Default` worker wrapper.
 
 You are done when the verification checklist in section 13 passes. The
@@ -986,21 +984,18 @@ The Research Agent prompt must instruct the agent to:
   are aware of it and may consult it on demand by searching for the
   relevant section title.
 
-### 4.12 Active prompt switch after installation
+### 4.12 Installation report gating after installation
 
-This switch is performed by the `Installation Agent` (the prompt described
-in section 8.2), not by the scaffolder running this document. As the
-scaffolder, you must leave `Current Prompt.txt` pointing at the
-`Installation Agent` prompt and leave the top-level launcher static.
+Gating is performed by the `Installation Agent` (the prompt described in
+section 8.2), not by the scaffolder running this document. As the scaffolder,
+you must leave `Installation Report.md` absent and leave the top-level
+launcher static.
 
 When the end user later runs the `Installation Agent` and completes its
-checklist, that agent changes `Current Prompt.txt` so the static top-level
-launcher opens the `Workspace Agent` prompt instead of the `Installation
-Agent` prompt. The launcher file name and launcher content stay the same.
-The required semantic change is the active prompt state; other metadata such
-as `--agent-name` may be derived by the launcher or dispatcher from the active
-prompt, as long as the launcher still invokes the same dispatcher and worker
-correctly.
+checklist, that agent creates `Installation Report.md` at workflow root.
+Presence of this file makes the static top-level launcher open
+`Workspace Agent`; absence makes it open `Installation Agent`. The launcher
+file name and launcher content stay the same.
 
 ### 4.13 Per-workspace agent TUI welcome and idle-on-start
 
@@ -1221,7 +1216,7 @@ Canonical names (English defaults):
 INSTALL.md                                        (this file is consumed by the AI; do not regenerate it)
 README.md
 Open Agent                                        (top-level launcher; extension depends on OS)
-Current Prompt.txt                               (active top-level prompt path)
+Installation Report.md                           (installation-complete artifact and report)
 Prompts/
   Installation Agent.md
   Workspace Agent.md
@@ -1353,8 +1348,9 @@ Requirements regardless of language:
 ### 5.4 OS launcher mechanism
 
 Pick the recipe in section 10 that matches the chosen OS. The top-level
-launcher reads `Current Prompt.txt` and invokes the dispatcher with that active
-prompt path and worker. Per-workspace launchers invoke the dispatcher with
+launcher checks for `Installation Report.md` and invokes the dispatcher with
+either `Installation Agent` (report absent) or `Workspace Agent` (report
+present). Per-workspace launchers invoke the dispatcher with
 their fixed per-agent prompt path and worker.
 On Windows, launchers must be plain-text `.cmd` files, not `.lnk`
 shortcuts. For Python-based distributions, the launcher must resolve
@@ -1378,9 +1374,9 @@ Lifecycle:
 
 1. The user opens the top-level launcher. The first time, it opens an AI
    agent with the `Installation Agent` prompt. That agent runs the
-  installation checklist (section 8.2) and, as its last step, switches
-  `Current Prompt.txt` so the same static launcher opens the `Workspace
-  Agent` prompt.
+  installation checklist (section 8.2) and, as its last step, creates
+  `Installation Report.md` so the same static launcher opens the
+  `Workspace Agent` prompt.
 2. From the second launch onward, the same launcher opens the `Workspace
    Agent` prompt.
 3. The Workspace Agent can create a workspace, archive a workspace, or open
@@ -1417,15 +1413,18 @@ the `Installation Agent` in section 8.2 step 1.
 - `README.md` - short overview of the workflow, the lifecycle, and how to
   launch.
 - `Open Agent.<launcher-ext>` - top-level launcher (see section 10). It stays
-  static and reads `Current Prompt.txt` to choose the active top-level prompt.
-- `Current Prompt.txt` - active top-level prompt state. It initially contains
-  the absolute path to `Prompts/Installation Agent.md`; the `Installation
-  Agent` switches this file to `Prompts/Workspace Agent.md` at the end of its
-  own checklist (section 4.12) after explicit user confirmation.
+  static and chooses top-level prompt by report artifact presence:
+  `Installation Report.md` absent -> `Installation Agent`, present ->
+  `Workspace Agent`.
+- `Installation Report.md` - installation-complete artifact and summary report.
+  It is absent in scaffolded state. The `Installation Agent` creates it at the
+  end of successful installation after explicit user confirmation
+  (section 4.12).
 - `Prompts/Installation Agent.md` - prompt that drives an installation
   conversation similar to the one that produced this workflow. Tells the AI
   to verify worker wrappers, repositories, naming, optional framework
-  mapping, and finally to switch the active prompt state. Platform-agnostic
+  mapping, and finally to create the installation report artifact.
+  Platform-agnostic
   content.
 - `Prompts/Workspace Agent.md` - prompt that orchestrates workspace creation,
   archival, and opening per-workspace agents.
@@ -1524,12 +1523,12 @@ in any order:
 - A two-to-three-line overview of the agentic, workspace-based delivery
   model.
 - The launcher lifecycle (first run uses `Installation Agent`, subsequent
-  runs use `Workspace Agent`) and the fact that `Current Prompt.txt`, not a
-  launcher rewrite, owns that active top-level prompt state.
-- A short `Active prompt switch audit` section. The scaffolder writes an
-  initial entry saying the active prompt starts as `Installation Agent`; the
-  Installation Agent appends one timestamped entry when it switches
-  `Current Prompt.txt` to `Workspace Agent` after user confirmation.
+  runs use `Workspace Agent`) and the fact that installation-report artifact
+  presence, not launcher rewrite, owns that top-level prompt selection.
+- A short `Installation report audit` section. The scaffolder writes an
+  initial note that `Installation Report.md` is absent; the Installation Agent
+  creates `Installation Report.md` with timestamped completion details after
+  user confirmation.
 - The dispatcher contract (the canonical flags of `Scripts/Agent.<ext>`).
 - The work-queue directory set (`Next/`, `Current/`, `Blocked/`, `Done/`) and
   task-file naming convention.
@@ -1539,17 +1538,21 @@ in any order:
   remote push happens without explicit user request.
 - A bullet list of the scripts with a one-line purpose each.
 
-### 8.1a `Current Prompt.txt`
+### 8.1a `Installation Report.md`
 
-Single-line UTF-8 text file, LF-terminated, with no quotes and no surrounding
-prose. The line contains the absolute path to the active top-level prompt.
-The scaffolder writes the absolute path to `Prompts/Installation Agent.md`.
-The Installation Agent may later replace it with the absolute path to
-`Prompts/Workspace Agent.md` after section 8.2 step 8 confirmation. If
-localized file names are enabled, use the effective mapped prompt filenames
-from section 5.2 instead of the canonical English basenames. Empty content,
-relative paths, paths outside the workflow root `Prompts/` directory, and paths
-that do not exist are invalid.
+UTF-8 markdown report file at workflow root. It is absent immediately after
+scaffolding. The Installation Agent creates it only after installation checks
+pass and the user confirms completion (section 8.2 step 8).
+
+Required content (concise):
+- installation completion timestamp (UTC ISO-8601),
+- installer summary of configured repositories/integrations,
+- a short checklist result line,
+- note that launcher prompt selection now resolves to `Workspace Agent`
+  because report artifact exists.
+
+Launcher gating contract: top-level launcher chooses `Prompts/Workspace Agent.md`
+when this file exists; otherwise it chooses `Prompts/Installation Agent.md`.
 
 ### 8.2 `Prompts/Installation Agent.md`
 
@@ -1568,7 +1571,7 @@ updates the affected files to match.
 
 Guidance:
 - Goal: prepare this distribution so the next launch opens `Workspace Agent`
-  instead of `Installation Agent` by switching `Current Prompt.txt` after the
+  instead of `Installation Agent` by creating `Installation Report.md` after the
   checklist passes.
 - Rules: keep the prompt platform-agnostic; one question at a time; do not
   reconfigure `Scripts/Workers/Default` (it is already wired by the
@@ -1576,12 +1579,12 @@ Guidance:
   concrete file updates and commands; explain what you are setting up, what
   happens next, and how the user will use the result; avoid low-level
   implementation detail unless it affects a real user decision; no remote
-  push. At startup, if `Current Prompt.txt` already points to the `Workspace
-  Agent` prompt and the template installation checks are complete, stop and
+  push. At startup, if `Installation Report.md` already exists and the
+  template installation checks are complete, stop and
   tell the user installation is already complete; do not restart the strict
   installer interview unless the user explicitly asks to repair or rerun
-  installation. Before changing workflow-control artifacts (`Current
-  Prompt.txt`, files under `Scripts/`, files under `Scripts/Workers/`, or the
+  installation. Before changing workflow-control artifacts (`Installation
+  Report.md`, files under `Scripts/`, files under `Scripts/Workers/`, or the
   top-level launcher), describe the exact intended change and ask one yes/no
   confirmation. The only expected script change in normal installation is
   adding optional extra worker wrappers; `Scripts/Workers/Default` and the
@@ -1719,7 +1722,7 @@ Guidance:
      expressed by editing existing files within the manifest, decline
      and explain the constraint; capture the request as a follow-up
      entry in `Workspaces/__template__/Backlog.md` instead.
-  7. **Verify installation.** Before switching the active prompt state, run a
+  7. **Verify installation.** Before creating the installation report artifact, run a
      self-check and fix anything that fails. Do not ask the user to do
      this; do it and report results. Tell the user what was checked and
      whether it passed, without turning the summary into a low-level dump.
@@ -1773,16 +1776,14 @@ Guidance:
      If any check fails, repair the offending artifact and re-run the
      affected check. Only proceed to step 8 once all checks pass.
 
-    8. **Switch the active top-level prompt.** Ask one yes/no confirmation
-      before switching. If the user confirms, update `Current Prompt.txt` so
-      the next launch starts `Workspace Agent` instead of `Installation Agent`
-      (section 4.12). Do not rewrite the top-level `Open Agent` launcher. Before
-      writing, verify that the target `Workspace Agent.md` prompt exists. After
-      the switch, re-run the dispatcher smoke test from step 7 against the new
-      prompt target (`Workspace Agent.md`) to confirm the static launcher state
-      still resolves to a valid harness command. Append a timestamped entry to
-      the README's `Active prompt switch audit` section recording the old
-      prompt, new prompt, and that the user confirmed the switch.
+    8. **Create installation report artifact.** Ask one yes/no confirmation
+      before creating `Installation Report.md`. If the user confirms, verify
+      `Workspace Agent.md` exists, then create `Installation Report.md`
+      (section 4.12) with concise completion details. Do not rewrite the
+      top-level `Open Agent` launcher. After creation, re-run the dispatcher
+      smoke test against `Workspace Agent.md` to confirm launcher-gated
+      resolution still yields a valid harness command. Append a timestamped
+      entry to README's installation-report audit section.
 
   9. **Offer to open Workspace Agent in a new window.** Immediately
      before emitting the final completion message in step 10, ask the
@@ -1792,7 +1793,8 @@ Guidance:
      session (that would reuse this session's context and is not what
      the user wants). Instead, open the top-level `Open Agent`
      launcher in a new OS-level window so it spawns a fresh harness
-     process pointed at the now-switched prompt. Concretely:
+    process now gated to `Workspace Agent` by report artifact presence.
+    Concretely:
      - Windows: `Start-Process -FilePath "<abs path to Open Agent.cmd>"`
        (or `cmd /c start "" "<abs path>"`); the `.cmd` launcher resolves
        Python and runs the dispatcher in its own console.
@@ -1816,7 +1818,7 @@ Guidance:
   `Workspaces/__template__/Workspace.md`; updated or stubbed
   `Workspaces/__template__/Framework.md` (with a backlog note when
   stubbed); updated `Workspaces/__template__/Prompts/Integration Agent.md`;
-  `Current Prompt.txt` switched to `Workspace Agent`; any
+  `Installation Report.md` created; any
   integration-related edits from step 6 applied to the existing files
   named in that step (no new files or scripts outside the section 7
   manifest, interpreted through section 5.2, except optional wrappers
@@ -2957,8 +2959,9 @@ inspection):
 
 Pick the recipe that matches the chosen OS. Per-workspace launchers invoke the
 dispatcher with their fixed prompt path and worker. The top-level launcher is
-static: it reads `Current Prompt.txt` from the workflow root, validates that it
-names an existing prompt file, and invokes the dispatcher with that prompt.
+static and file-system gated: if `Installation Report.md` exists at workflow
+root, it invokes dispatcher with `Prompts/Workspace Agent.md`; otherwise it
+invokes dispatcher with `Prompts/Installation Agent.md`.
 
 The dispatcher is invoked with the project's interpreter for the chosen
 programming language (for example: `py` on Windows for Python, `python3` on
@@ -2971,17 +2974,18 @@ in section 10.1 before invoking the dispatcher.
 
 ### 10.0 Launcher validation contract
 
-All top-level OS launcher recipes must enforce the same active-prompt
+All top-level OS launcher recipes must enforce the same artifact-gating
 validation rules before invoking the dispatcher:
 
-- Read `Current Prompt.txt` as UTF-8 text and trim trailing line breaks.
-- Reject empty prompt paths.
-- Resolve the prompt path to an absolute path.
-- Reject when the resolved path does not exist.
-- Reject when the resolved path is outside the workflow-root `Prompts/`
+- Resolve workflow-root report path `Installation Report.md`.
+- If the report exists, select `Prompts/Workspace Agent.md`; otherwise select
+  `Prompts/Installation Agent.md`.
+- Resolve selected prompt to absolute path.
+- Reject when selected prompt path does not exist.
+- Reject when selected prompt path is outside workflow-root `Prompts/`
   directory.
 
-Per-workspace launchers do not read `Current Prompt.txt`; they pass their
+Per-workspace launchers do not read `Installation Report.md`; they pass their
 fixed per-agent prompt path and `--workspace .` directly.
 
 ### 10.1 Windows: `.cmd` launchers
@@ -2991,12 +2995,8 @@ launcher must resolve Python in this exact order before invoking the
 dispatcher: `py` on `PATH`, then `python` on `PATH`, then
 `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`.
 
-Top-level and per-workspace launchers follow section 10.0 for active-prompt
+Top-level and per-workspace launchers follow section 10.0 for report-gating
 validation and path-containment rules.
-
-`set /p` reading of `Current Prompt.txt` is expected to work with LF or CRLF
-line endings because prompt-path validation trims trailing line breaks at the
-contract level (section 10.0).
 
 ```
 @echo off
@@ -3012,20 +3012,19 @@ if not defined PYTHON_CMD (
 )
 
 cd /d "%~dp0"
-if exist "Current Prompt.txt" (
-  set /p "PROMPT_PATH="<"Current Prompt.txt"
+if exist "Installation Report.md" (
+  set "PROMPT_PATH=%CD%\Prompts\Workspace Agent.md"
 ) else (
-  >&2 echo Current Prompt.txt not found.
-  exit /b 2
+  set "PROMPT_PATH=%CD%\Prompts\Installation Agent.md"
 )
 for %%I in ("%PROMPT_PATH%") do set "PROMPT_PATH=%%~fI"
 for %%I in ("%CD%\Prompts\") do set "PROMPTS_ROOT=%%~fI"
 if not exist "%PROMPT_PATH%" (
-  >&2 echo Active prompt not found: %PROMPT_PATH%
+  >&2 echo Selected prompt not found: %PROMPT_PATH%
   exit /b 2
 )
 echo(%PROMPT_PATH%| findstr /i /b /c:"%PROMPTS_ROOT%" >nul || (
-  >&2 echo Active prompt must be under Prompts/: %PROMPT_PATH%
+  >&2 echo Selected prompt must be under Prompts/: %PROMPT_PATH%
   exit /b 2
 )
 call "%PYTHON_CMD%" "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "%PROMPT_PATH%" --mode tui --agent-name "Open Agent" --new-window
@@ -3042,15 +3041,14 @@ Notes:
   language. For Go on Windows, resolve `go` via `where go`; if missing,
   emit a clear error and exit 127; when present, invoke
   `go run "<abs path to Scripts/Agent.go>" ...`.
-- Top-level `Open Agent.cmd` reads `Current Prompt.txt` from the workflow root
-  and passes that absolute prompt path to the dispatcher. The launcher file is
-  static; installation switches the active prompt by updating
-  `Current Prompt.txt`, not by rewriting the launcher.
+- Top-level `Open Agent.cmd` checks `Installation Report.md` presence and
+  selects prompt accordingly. The launcher file is static; installation state
+  changes by creating/removing report artifact, not by rewriting launcher.
 - In the sample containment check, `%PROMPTS_ROOT%` includes a trailing
   backslash so the prefix test remains folder-exact (`Prompts\\...`, not
   similarly prefixed siblings).
 - The example above is the top-level launcher shape. Per-workspace Windows
-  launchers omit `Current Prompt.txt` and pass a relative prompt path
+  launchers omit report gating and pass a relative prompt path
   (`Prompts/<Agent>.md`)
   and `--workspace "."`; `<Agent>` resolves to the effective mapped prompt
   basename for that role when section 5.2 localization is enabled. The
@@ -3062,7 +3060,7 @@ Notes:
 Each launcher is an executable shell script with a `.command` extension so
 the user can double-click it from Finder.
 
-Top-level and per-workspace launchers follow section 10.0 for active-prompt
+Top-level and per-workspace launchers follow section 10.0 for report-gating
 validation and path-containment rules.
 
 Top-level launcher:
@@ -3071,14 +3069,18 @@ Top-level launcher:
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-prompt_path="$(tr -d '\r\n' < "Current Prompt.txt")"
-if [[ -z "$prompt_path" || ! -f "$prompt_path" ]]; then
-  printf '%s\n' "Active prompt not found: $prompt_path" >&2
+if [[ -f "Installation Report.md" ]]; then
+  prompt_path="$(pwd)/Prompts/Workspace Agent.md"
+else
+  prompt_path="$(pwd)/Prompts/Installation Agent.md"
+fi
+if [[ ! -f "$prompt_path" ]]; then
+  printf '%s\n' "Selected prompt not found: $prompt_path" >&2
   exit 2
 fi
 case "$prompt_path" in
   "$(pwd)/Prompts/"*) ;;
-  *) printf '%s\n' "Active prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;;
+  *) printf '%s\n' "Selected prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;;
 esac
 exec "<interpreter>" "<abs path to Scripts/Agent.<ext>>" \
   --worker "Default" \
@@ -3114,12 +3116,12 @@ Top-level launcher:
 [Desktop Entry]
 Type=Application
 Name=Open Agent
-Exec=sh -c 'prompt_path="$(tr -d "\r\n" < "$1/Current Prompt.txt")"; if [ -z "$prompt_path" ] || [ ! -f "$prompt_path" ]; then printf "%s\n" "Active prompt not found: $prompt_path" >&2; exit 2; fi; case "$prompt_path" in "$1/Prompts/"*) ;; *) printf "%s\n" "Active prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;; esac; exec <interpreter> "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "$prompt_path" --mode tui --agent-name "Open Agent"' sh "<workflow root>"
+Exec=sh -c 'if [ -f "$1/Installation Report.md" ]; then prompt_path="$1/Prompts/Workspace Agent.md"; else prompt_path="$1/Prompts/Installation Agent.md"; fi; if [ ! -f "$prompt_path" ]; then printf "%s\n" "Selected prompt not found: $prompt_path" >&2; exit 2; fi; case "$prompt_path" in "$1/Prompts/"*) ;; *) printf "%s\n" "Selected prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;; esac; exec <interpreter> "<abs path to Scripts/Agent.<ext>>" --worker "Default" --prompt "$prompt_path" --mode tui --agent-name "Open Agent"' sh "<workflow root>"
 Path=<workflow root>
 Terminal=true
 ```
 
-Top-level and per-workspace launchers follow section 10.0 for active-prompt
+Top-level and per-workspace launchers follow section 10.0 for report-gating
 validation and path-containment rules.
 
 Per-workspace launcher:
@@ -3140,21 +3142,21 @@ Mark the file executable. Do not create any additional launcher or wrapper
 files on Linux unless they are explicitly listed in the effective manifest
 (section 5.2 + section 7).
 
-### 10.4 Switching the active top-level prompt after installation
+### 10.4 Installation report artifact after installation
 
 At the end of installation, do not regenerate or edit the top-level launcher.
-Instead, update `Current Prompt.txt` so its single line is the absolute path to
+Instead, create `Installation Report.md` so report-presence gating resolves to
 `Prompts/Workspace Agent.md`. The launcher file name and content stay
-identical. Keep the dispatcher, worker, mode, and working-directory semantics
-in the launcher unchanged.
+identical. Keep dispatcher, worker, mode, and working-directory semantics
+unchanged.
 
-Before writing `Current Prompt.txt`, the Installation Agent must verify that
-the target prompt exists and ask the user one yes/no confirmation. If the user
-declines, leave `Current Prompt.txt` pointing at `Prompts/Installation
-Agent.md` and report that installation is not complete. After switching, the
-Installation Agent must verify the static launcher plus `Current Prompt.txt`
-still resolves to a valid harness command (per section 8.2 step 7) before
-reporting installation complete.
+Before writing `Installation Report.md`, the Installation Agent must verify
+that `Prompts/Workspace Agent.md` exists and ask the user one yes/no
+confirmation. If the user declines, leave `Installation Report.md` absent and
+report that installation is not complete. After writing the report, the
+Installation Agent must verify static launcher gating still resolves to a valid
+harness command (per section 8.2 step 7) before reporting installation
+complete.
 
 ---
 
@@ -3295,12 +3297,13 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
    `python` on `PATH`, then `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`,
   and that it invokes the dispatcher without hardcoding a user-profile
   absolute path. Verify the top-level launcher is static, reads
-  `Current Prompt.txt`, refuses a missing or nonexistent active prompt, and
-  rejects active prompt paths outside the workflow root `Prompts/` directory.
+  report artifact state from `Installation Report.md`, selects the correct
+  top-level prompt, and rejects selected prompt paths outside the workflow
+  root `Prompts/` directory.
   Verify it does not hardcode either `Installation Agent.md` or
   `Workspace Agent.md` as its permanent prompt target. Verify
-  `Current Prompt.txt` initially points to `Prompts/Installation Agent.md` and
-  `README.md` contains the initial `Active prompt switch audit` entry.
+  scaffolded state has no `Installation Report.md` and `README.md` contains the
+  initial installation-report audit entry.
 5. `Work - Move` transition matrix check: in a scratch workspace create
    synthetic task files and verify each allowed transition from section
    4.5a succeeds, each disallowed transition fails, `Current/` singleton
@@ -3517,7 +3520,7 @@ throwaway workspace and to roll the workflow root back to its
 post-scaffold state when finished. The rehearsal must leave **no
 artifacts** behind: no extra files, no extra git history in template
 repos, no extra entries in `__archive__/`, and no lasting change to
-`Current Prompt.txt` or the top-level launcher.
+`Installation Report.md` presence or the top-level launcher.
 
 Harness calls are stubbed throughout: every dispatcher invocation that
 would normally spawn the AI harness is made with `--mode cli --dry-run`,
@@ -3545,9 +3548,10 @@ Protocol:
    mirror anything the scaffolder ships (the scaffolder ships an empty
    template). No upstream is configured; everything stays local.
 
-3. **Switch the active prompt (simulated).** Update `Current Prompt.txt` so
-  it points to `Prompts/Workspace Agent.md`, exactly the operation described
-  in section 10.4. Verify the static launcher parses and reads the state file.
+3. **Simulate installation completion.** Create `Installation Report.md` at
+  workflow root, exactly the operation described in section 10.4. Verify the
+  static launcher parses and resolves `Workspace Agent` via report artifact
+  gating.
 
 4. **Create a workspace.** Invoke
    `Scripts/Workspace - Create --workspace rehearsal-smoke --branch
@@ -3627,8 +3631,9 @@ Protocol:
    - the rehearsal repo directories (`RehearsalA/`, `RehearsalB/`,
      `RehearsalC/`) are gone from `Workspaces/__template__/`,
    - `__archive__/` is empty,
-   - `Current Prompt.txt` points to `Prompts/Installation Agent.md` again,
-   - the top-level launcher is unchanged and still reads `Current Prompt.txt`,
+   - `Installation Report.md` is absent again,
+   - the top-level launcher is unchanged and still uses report artifact
+     gating,
    - no `rehearsal-smoke` workspace remains.
    After restoration, delete the snapshot directory.
 

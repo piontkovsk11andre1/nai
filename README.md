@@ -29,8 +29,8 @@ location.
 The first time you open the top-level launcher it runs a one-off
 **Installation Agent** that wires up your actual repos and naming
 conventions, asks about any add-ons or tweaks you want, and then
-rewrites the launcher to open the day-to-day **Workspace Agent** from
-then on.
+creates `Installation Report.md`. From then on, the same static launcher
+detects that report file and opens the day-to-day **Workspace Agent**.
 
 After that, just open the top-level launcher again and ask the
 **Workspace Agent** to walk you through the workflow — it will show
@@ -98,6 +98,7 @@ A directory like this, generated on first install:
 
 ```
 Open Agent.(cmd|command|desktop)   top-level launcher
+Installation Report.md             created after install completion
 Prompts/
   Installation Agent.md
   Workspace Agent.md
