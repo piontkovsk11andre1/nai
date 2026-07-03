@@ -899,6 +899,12 @@ localized names, you may translate them, but you must:
   script reference, and prose mention.
 - Keep the file structure and relationships identical.
 - Use file system-safe characters only.
+- Keep each mapped name as a single path segment. Mapped names must not
+  contain path separators, drive prefixes, absolute roots, `.` or `..`
+  segments, or any other construct that changes hierarchy.
+- Preserve reserved workflow directories and semantics: mapping must not
+  collide with `Workspaces`, `__template__`, `__archive__`, `Prompts`,
+  `Scripts`, `Workers`, `Work`, or OS launcher extensions.
 - Record the mapping table in `README.md` under a short dedicated section;
   do not modify `INSTALL.md`.
 
