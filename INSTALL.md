@@ -160,8 +160,9 @@ deferring it.
    available on PATH, run `<binary> --help` (and `<binary> <subcommand>
    --help` for likely subcommands), propose the command patterns and
    attach flag based on that output, and confirm the proposal with the
-   user in one message. Only ask follow-up questions for the details you
-   could not determine. If the binary is not available, ask the user
+  user in one message. If the proposal is incomplete or ambiguous, ask
+  follow-up questions **one at a time** only for the missing details,
+  then continue with question 6 in order. If the binary is not available, ask the user
    directly. Either way, write the final answer into
    `Scripts/Workers/Default.<ext>` during scaffolding; do not leave this
    choice for the `Installation Agent`.
@@ -341,6 +342,10 @@ directories: `Next/`, `Current/`, `Blocked/`, `Done/`.
   Action: rename or remove the offending file before retrying.
   ```
 
+This exact five-line shape is mandatory in every queue-touching workflow
+script (`Work - Do`, `Work - Move`, `Work - Undo`) whenever canonical
+task-filename validation fails.
+
 ### 4.3a Task-file schema (canonical example)
 
 Task files are plain UTF-8 markdown. Only workflow metadata frontmatter is
@@ -476,7 +481,8 @@ Decision order on each invocation:
 
 1. If `Blocked` is non-empty:
    - Validate `Work/Blocked/` task filenames against section 4.3 before
-     selection; on mismatch exit non-zero with a clear message.
+  selection; on mismatch exit non-zero using the mandatory five-line
+  filename-validation error format from section 4.3.
    - If `--blocked-action` is not provided: exit non-zero with a message
      naming the two valid values and stop.
    - Let `<task>` be the first file in `Work/Blocked/` by lexical name.
@@ -488,7 +494,8 @@ Decision order on each invocation:
 
 2. Else if `Current` is non-empty:
    - Validate `Work/Current/` task filenames against section 4.3 before
-     any action; on mismatch exit non-zero with a clear message. If more
+  any action; on mismatch exit non-zero using the mandatory five-line
+  filename-validation error format from section 4.3. If more
      than one task file exists in `Current/`, exit non-zero with a clear
      precondition error because `Current/` is a singleton queue.
    - If `--current-action` is not provided: exit non-zero with a message
@@ -500,13 +507,15 @@ Decision order on each invocation:
 
 3. Else if `Current` is empty and `Next` is non-empty:
   - Validate `Work/Next/` task filenames against section 4.3 before
-    selection; on mismatch exit non-zero with a clear message.
+    selection; on mismatch exit non-zero using the mandatory five-line
+    filename-validation error format from section 4.3.
    - Let `<task>` be the first file in `Work/Next/` by lexical name.
    - If `--dry-run` is set and `--rehearse` is not set, print the planned
      `Next -> Current` transition and continue through the planned execution
      and verification steps without invoking `Work - Move` or changing any
      file. `--dry-run` is a read-only preview.
-   - Invoke `Work - Move` with `--from next --to current --task <task>`.
+   - Otherwise (normal mode or `--rehearse`), invoke `Work - Move` with
+     `--from next --to current --task <task>`.
    - Continue to execution. When `--rehearse` is set, this pop-and-write
      step intentionally runs on disk, but every harness invocation below is
      made with `--dry-run` so no tokens are spent and no model round-trip
@@ -658,7 +667,8 @@ Behavior:
   from canonical file-name prefix `w-<digits>. ` (ascending numeric order),
   tie-breaker lexical file name. If a file in `Done/` does not match the
   canonical prefix, treat it as a precondition error and exit non-zero with
-  a clear message naming the offending file. Take the last
+  the mandatory five-line filename-validation error format from section 4.3.
+  Take the last
   `min(N, len(done))` tasks as the undo set.
 2. Preflight: for every rollback entry across the undo set, verify the target
   commit exists in the corresponding repository. Also report each affected
@@ -2336,7 +2346,8 @@ Implementation requirements:
 
 - Discover task files in queue directories by lexical file-name order.
 - Validate discovered queue task filenames against canonical naming from
-  section 4.3 before selection or action; fail fast on mismatch.
+  section 4.3 before selection or action; fail fast on mismatch using the
+  mandatory five-line filename-validation error format from section 4.3.
 - Read/write task files as UTF-8.
 - Use metadata-frontmatter helpers compatible with section 4.4.
 - Build `--context-files` from existing workspace artifacts listed in
@@ -2429,7 +2440,8 @@ Additional requirements:
 - `resolve_source_task` validates canonical task naming from section 4.3
   for every candidate considered in source queues.
 - `--task` values that do not match canonical naming are rejected with
-  exit code 2 before any file mutation.
+  exit code 2 before any file mutation, using the mandatory five-line
+  filename-validation error format from section 4.3.
 
 Canonical invocation examples (paths shown as relative for readability):
 
@@ -2592,11 +2604,13 @@ if exist "Current Prompt.txt" (
   >&2 echo Current Prompt.txt not found.
   exit /b 2
 )
+for %%I in ("%PROMPT_PATH%") do set "PROMPT_PATH=%%~fI"
+for %%I in ("%CD%\Prompts\") do set "PROMPTS_ROOT=%%~fI"
 if not exist "%PROMPT_PATH%" (
   >&2 echo Active prompt not found: %PROMPT_PATH%
   exit /b 2
 )
-echo(%PROMPT_PATH%| findstr /i /b /c:"%CD%\Prompts\" >nul || (
+echo(%PROMPT_PATH%| findstr /i /b /c:"%PROMPTS_ROOT%" >nul || (
   >&2 echo Active prompt must be under Prompts/: %PROMPT_PATH%
   exit /b 2
 )
@@ -2799,6 +2813,11 @@ For Go: use `flag`, `os/exec`, `io/fs`, `path/filepath`, `time`.
 After scaffolding, run these checks. Do not ask the user; do them yourself
 and report results.
 
+Safety boundary for verification: every mutating or destructive check must run
+only inside scaffolder-created scratch paths and throwaway repositories created
+for this run. Never run mutating or destructive verification steps against
+pre-existing user repositories, pre-existing workspaces, or unknown paths.
+
 0. **Cleanup pass.** Before running the remaining checks, walk the entire
    workflow root and identify every file or directory that is not part of
   the effective manifest (section 5.2 + section 7) and was created by
@@ -2866,7 +2885,8 @@ and report results.
   add/strip) match sections 4.4 and 4.4a. Also verify canonical
   filename enforcement from section 4.3: non-canonical task filenames
   are rejected with user/precondition errors across selection and move
-  paths.
+  paths, and every such rejection uses the mandatory five-line
+  filename-validation error format from section 4.3.
 6. `Workspace - Remove` refuses to run without `--synced`.
 7. `Work - Do` refuses to run when `Blocked` or `Current` is non-empty
    without the matching action flag.
@@ -2971,7 +2991,9 @@ and report results.
 21. Final manifest-exactness check: after step 12 cleanup (and after section
   13.5 rehearsal restore when rehearsal was enabled), assert that
   manifest-managed portions of the workflow root match the effective manifest
-  exactly, with no extra scaffolder-created files or directories.
+  exactly, with no extra scaffolder-created files or directories. This check
+  applies only to manifest-managed portions plus known run provenance; it must
+  not fail on pre-existing baseline paths outside manifest management.
 
 22. Windows detach semantics check (Windows installs only): verify worker
   wrapper logic for `--new-window` + `--mode tui` spawns a detached new
