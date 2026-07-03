@@ -316,20 +316,24 @@ directories: `Next/`, `Current/`, `Blocked/`, `Done/`.
 
 ### 4.3a Task-file schema (canonical example)
 
-Task files are plain UTF-8 markdown. Only workflow metadata headers are
+Task files are plain UTF-8 markdown. Only workflow metadata frontmatter is
 machine-parsed; everything else is opaque task content.
 
-- In `Next/`, tasks normally start without metadata headers.
-- On `Next -> Current`, `Work - Move` prepends rollback header
-  (section 4.4).
-- On `Current -> Blocked`, `Work - Move` inserts blocked-reason header
-  after rollback header (section 4.4a).
+- In `Next/`, tasks normally start without metadata frontmatter.
+- On `Next -> Current`, `Work - Move` prepends rollback metadata
+  frontmatter (section 4.4).
+- On `Current -> Blocked`, `Work - Move` inserts blocked-reason metadata
+  into the same frontmatter block (section 4.4a).
 - On verifier finalization, `Work - Move` appends a verification section.
 
 Example task file as it appears in `Done/` after one verification run:
 
 ```
-<!-- rollback: RepoA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa RepoB=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->
+---
+rollback:
+  RepoA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  RepoB: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+---
 
 # Task
 
@@ -348,49 +352,59 @@ Implement feature X according to Plan section Y.
 Notes:
 
 - The markdown body format is a recommendation, not a parser contract.
-- The two HTML-comment headers are the only parser contract.
-- `Work - Undo` and `done -> next` reopening strip rollback/blocked headers
+- The YAML frontmatter metadata block is the parser contract.
+- `Work - Undo` and `done -> next` reopening strip rollback/blocked metadata
   before returning the file to `Next/`.
 
-### 4.4 Rollback metadata header
+### 4.4 Rollback metadata frontmatter
 
-When a task first moves from `Next/` to `Current/`, it must get a rollback
-header on its first line in
-exactly this shape:
+When a task first moves from `Next/` to `Current/`, it must get rollback
+metadata in YAML frontmatter at the top of the file in exactly this shape:
 
 ```
-<!-- rollback: RepoNameA=<hash> RepoNameB=<hash> ... -->
+---
+rollback:
+  RepoNameA: <hash>
+  RepoNameB: <hash>
+---
 ```
 
 - Keys are workspace-relative repository directory names.
 - Values are full git commit hashes (output of `git rev-parse HEAD` at the
   moment the task entered `Current/`).
 - Repos are listed in case-insensitive alphabetical order by name.
-- Whitespace: single space between tokens. Single space after the colon and
-  before the closing `-->`.
 - Zero-repo workspaces (no immediate subdirectory is a git working tree)
-  still get a header, in the canonical empty form
-  `<!-- rollback: -->` (single space after the colon, single space before
-  the closing `-->`, no tokens between them).
-- The rollback header is preserved while the task is in `Current/`,
+  still get frontmatter, in the canonical empty form:
+
+  ```
+  ---
+  rollback: {}
+  ---
+  ```
+- The rollback metadata is preserved while the task is in `Current/`,
   `Blocked/`, and `Done/`.
-- The rollback header is stripped when reopening `Done/ -> Next/` and when
+- The rollback metadata is stripped when reopening `Done/ -> Next/` and when
   `Work - Undo` restores tasks to `Next/`.
 
-### 4.4a Blocked reason header
+### 4.4a Blocked reason frontmatter field
 
 When a task moves into `Blocked/` (failed verification, invalid verifier
 finalization, or verifier dispatcher failure), the workflow must record
 **why** directly inside the task file so the user can act without
 inspecting logs.
 
-Insert the blocked-reason header on the line immediately after the
-existing rollback header (which is preserved verbatim). If there is no
-rollback header for some reason, the blocked-reason header is the first
-line of the task file. Shape:
+Insert or update a `blocked` object in the task frontmatter. Keep the
+existing `rollback` object verbatim when present. If there is no
+frontmatter for some reason, create one at the top of the file. Shape:
 
 ```
-<!-- blocked: kind=<KIND> reason="<one-line reason>" -->
+---
+rollback:
+  RepoNameA: <hash>
+blocked:
+  kind: <KIND>
+  reason: "<one-line reason>"
+---
 ```
 
 - `<KIND>` is one of the literal ASCII tokens `FAIL`, `INVALID`, or
@@ -403,15 +417,12 @@ line of the task file. Shape:
   - for `DISPATCHER`: a fixed translated sentence stating that the
     verifier dispatcher exited with code `<N>`.
 - Embedded double quotes in the reason are replaced with single
-  quotes; newlines and the literal sequence `-->` are replaced with
-  spaces, so the header always fits on one line and cannot terminate
-  the comment early.
-- Whitespace: single space between tokens; single space after the
-  colon and before the closing `-->`.
+  quotes; newlines and the literal sequence `---` are replaced with
+  spaces, so the value always remains a one-line scalar.
 
 When a blocked task is later moved out of `Blocked/` (`Blocked -> Current`
-or `Blocked -> Done`), strip the blocked-reason header before writing.
-The rollback header stays.
+or `Blocked -> Done`), strip the `blocked` field before writing.
+The `rollback` field stays.
 
 ### 4.5 `Work - Do` state machine
 
@@ -443,8 +454,8 @@ Decision order on each invocation:
      naming the two valid values and stop.
    - If `to-done`: invoke `Work - Move` with
      `--from current --to done` and stop.
-   - If `restart`: fall through to the execution step below using the existing
-     current task file (do not recapture rollback metadata).
+  - If `restart`: fall through to the execution step below using the existing
+    current task file (do not recapture rollback metadata).
 
 3. Else if `Current` is empty and `Next` is non-empty:
    - Let `<task>` be the first file in `Work/Next/` by lexical name.
@@ -455,8 +466,8 @@ Decision order on each invocation:
      still mutates `Next/` and `Current/` on disk.
 
 4. Execution and verification:
-   - Build a tail string equal to the current task body (rollback header
-     stripped).
+  - Build a tail string equal to the current task body (metadata
+    frontmatter stripped).
    - Invoke the dispatcher with the execution worker, the execute prompt
      (`Prompts/Work - Execute.md` inside the workspace), the workspace path,
      the mode, and the tail.
@@ -529,12 +540,13 @@ Behavior:
 3. Enforce destination constraints:
   - destination `current` must be empty.
 4. Content transforms before move:
-  - `next -> current`: capture repo hashes (section 4.4) and prepend
-    rollback header if missing;
-  - `current -> blocked`: add/update blocked-reason header (section 4.4a)
+  - `next -> current`: capture repo hashes (section 4.4) and ensure
+    rollback frontmatter exists;
+  - `current -> blocked`: add/update blocked-reason frontmatter field (section 4.4a)
     using `--reason-kind` and `--reason` when provided;
-  - `blocked -> current` and `blocked -> done`: strip blocked-reason header;
-  - `done -> next`: strip rollback and blocked-reason headers.
+  - `blocked -> current` and `blocked -> done`: strip blocked-reason field;
+  - `done -> next`: strip rollback and blocked-reason fields (remove the
+    frontmatter block entirely if it becomes empty).
 5. If `--verification-output-file` is provided, read it as UTF-8 and append
   it to the task as a new section at EOF:
 
@@ -572,7 +584,7 @@ Behavior:
   before the first undone task. Stop on first repo failure with a
    non-zero exit; do not try to recover, but report which repo and what
    failed.
-4. For each undone task, strip rollback and blocked-reason headers and move
+4. For each undone task, strip rollback and blocked-reason frontmatter fields and move
   the file to `Work/Next/` in original order.
 
 Destructive intent is by design: dirty working trees are erased.
@@ -880,10 +892,10 @@ includes:
 Protocol literals that are **not translated** under any circumstances
 (they are machine-parsed tokens, not user-facing prose):
 
-- The rollback header marker `<!-- rollback: ... -->` from section 4.4
-  and the blocked-reason header marker `<!-- blocked: ... -->` from
-  section 4.4a. Keys and structure are fixed ASCII; only the embedded
-  free-text reason value is in the chosen language.
+- The task-metadata frontmatter keys from sections 4.4 and 4.4a:
+  `rollback`, `blocked`, `kind`, and `reason`. Keys and structure are
+  fixed ASCII; only the embedded free-text reason value is in the chosen
+  language.
 - Dispatcher / worker / `Work - *` CLI flag names (`--prompt`, `--mode`,
   `--workspace`, `--from`, `--to`, `--blocked-action to-current|to-done`,
   etc.). Their
@@ -1266,8 +1278,8 @@ Guidance:
      shortcut setup here -- the scaffolder ships an empty template.
      Repeat the per-repo interaction below until the user says they are
      done; the user may also say "none" at the first prompt, in which
-     case workspaces will have no attached repositories (still valid; the
-     zero-repo rollback header form from section 4.4 covers this).
+    case workspaces will have no attached repositories (still valid; the
+    zero-repo rollback frontmatter form from section 4.4 covers this).
 
      For each repository the user adds, collect:
      - **Source.** One of:
@@ -1993,7 +2005,7 @@ one example correction entry the user can replace or delete.
 All four work-queue directories in the template are created empty. They exist
 so the workspace structure is complete on copy, but they carry no
 instructional text or example content. The task-file format (section 4.3),
-rollback header format (section 4.4), and blocked-reason header format
+rollback frontmatter format (section 4.4), and blocked-reason frontmatter format
 (section 4.4a) are the authoritative reference; do not duplicate those rules
 inside queue files.
 
@@ -2156,7 +2168,7 @@ Implementation requirements:
 
 - Discover task files in queue directories by lexical file-name order.
 - Read/write task files as UTF-8.
-- Use rollback-header helpers compatible with section 4.4.
+- Use metadata-frontmatter helpers compatible with section 4.4.
 - Build `--context-files` from existing workspace artifacts listed in
   section 4.5. **Never include `Facts.md`** in this list even when the
   file exists; Facts is a search-on-demand reference (section 8.22).
@@ -2188,7 +2200,7 @@ Behavior follows section 4.6 step by step. Provide:
 - `git_reset_hard(repo, hash)` via `git reset --hard <hash>`.
 - `git_clean_fdx(repo)` via `git clean -fdx`.
 - Sort `Done/` task files by completion chronology rule from section 4.6.
-- Strip rollback/blocked headers before moving undone task files back to
+- Strip rollback/blocked frontmatter fields before moving undone task files back to
   `Next/`.
 
 Exit codes: 0 success, 2 user/precondition error including preflight
@@ -2210,13 +2222,13 @@ def main():
 
   text = read_utf8(task)
   if args.from_state == "next" and args.to_state == "current":
-    text = ensure_rollback_header(text, capture_repo_heads(ws))
+    text = ensure_rollback_frontmatter(text, capture_repo_heads(ws))
   if args.to_state == "blocked":
     text = upsert_blocked_reason(text, args.reason_kind, args.reason)
   if args.from_state == "blocked" and args.to_state in ("current", "done"):
     text = strip_blocked_reason(text)
   if args.from_state == "done" and args.to_state == "next":
-    text = strip_blocked_reason(strip_rollback_header(text))
+    text = strip_blocked_field(strip_rollback_field(text))
   if args.verification_output_file:
     out = read_utf8(args.verification_output_file)
     text = append_verification_section(text, out, utc_timestamp())
@@ -2612,7 +2624,7 @@ and report results.
 5. `Work - Move` transition matrix check: in a scratch workspace create
    synthetic task files and verify each allowed transition from section
    4.5a succeeds, each disallowed transition fails, `Current/` singleton
-   enforcement works, and header transforms (rollback/blocked-reason
+  enforcement works, and metadata transforms (rollback/blocked-reason
    add/strip) match sections 4.4 and 4.4a.
 6. `Workspace - Remove` refuses to run without `--synced`.
 7. `Work - Do` refuses to run when `Blocked` or `Current` is non-empty
@@ -2690,8 +2702,8 @@ and report results.
 19. Protocol-literal immutability check: verify all generated artifacts keep
   protocol-critical machine tokens exactly as specified (section 5.1), with
   no localization or spelling drift. At minimum confirm:
-  - rollback header marker `<!-- rollback: ... -->` and blocked marker
-    `<!-- blocked: ... -->` are unchanged;
+  - task frontmatter keys `rollback`, `blocked`, `kind`, and `reason`
+    are unchanged;
   - dispatcher / worker / `Work - *` CLI flag names and enum values remain
     ASCII and exact (for example `--prompt`, `--mode`, `--from`, `--to`,
     `to-current`, `to-done`);
@@ -2768,7 +2780,7 @@ Protocol:
    `Scripts/Work - Do --workspace Workspaces/rehearsal-smoke --mode cli
    --dry-run`. Assert:
    - the task file moved out of `Work/Next/`,
-   - `Work/Current/` contains the task file with a valid rollback header
+   - `Work/Current/` contains the task file with valid rollback frontmatter
      (section 4.4) carrying real commit hashes from the three rehearsal repos,
    - the dispatcher was invoked with the execute prompt and the verify
      prompt (both as dry runs),
@@ -2786,7 +2798,7 @@ Protocol:
    - Simulate verifier failure by invoking
      `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to blocked --reason-kind FAIL --reason "Rehearsal simulated verifier failure" --verification-output-file <tmp-failure-output.txt>`
      and assert the task moves to `Work/Blocked/`, appends a
-     `Verification Output` section, and adds a blocked-reason header.
+     `Verification Output` section, and adds blocked-reason frontmatter.
    - Invoke
      `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from blocked --to done`
      so the task is in `Work/Done/` for the explicit undo exercise below.
@@ -2795,14 +2807,14 @@ Protocol:
    `Work/Current/` (for example via `Work - Move --from done --to next`
    followed by `Work - Move --from next --to current`), then re-invoke
    `Work - Do` with `--current-action to-done`. Assert the task now lives
-   in `Work/Done/` with its rollback header intact.
+  in `Work/Done/` with its rollback frontmatter intact.
 
 7. **Exercise `Work - Undo`.** Invoke
    `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
    1`. Assert:
-   - the task returned to `Work/Next/` without its rollback header,
+   - the task returned to `Work/Next/` without rollback frontmatter,
    - each repo's `HEAD` matches the hash that was captured in the
-     rollback header (preflight succeeded, reset worked).
+     rollback frontmatter (preflight succeeded, reset worked).
 
 8. **Archive the workspace.** Invoke
    `Scripts/Workspace - Remove --workspace rehearsal-smoke --synced`.
@@ -2870,7 +2882,7 @@ anything to any remote. Stop.
 - **Mode** - `cli` (unattended) or `tui` (interactive).
 - **Task file** - one markdown file representing one unit of work in one of
   `Work/Next/`, `Work/Current/`, `Work/Blocked/`, or `Work/Done/`.
-- **Rollback header** - a single HTML-comment line at the top of a task file
+- **Rollback metadata** - the `rollback` field in task frontmatter
   (captured on `Next -> Current`) that records per-repository commit hashes
   for safe rollback.
 - **Workspace branch** - the git branch name shared by all repositories of a

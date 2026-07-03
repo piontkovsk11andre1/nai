@@ -211,7 +211,7 @@ A few things that make this different from "just prompting an agent":
   context. The launcher-based path still exists when you want a fresh
   separate window.
 - **Git-synchronized rollback.** Before each task runs, the `HEAD` of
-  every repo in the workspace is recorded into a header attached to the
+  every repo in the workspace is recorded into task frontmatter attached to the
   task file. Ask the Worker (or Integration) Agent to undo the last N steps and it
   resets every affected repo back to its captured state and puts the
   tasks back on the queue. You can let an agent try aggressive changes
