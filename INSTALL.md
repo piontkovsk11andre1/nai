@@ -239,9 +239,9 @@ Behavior:
 - Build a subprocess command that invokes the resolved worker script with all
   passthrough arguments, normalizing `--context-files` to absolute paths.
   CSV parsing is strict: split on literal commas, trim outer whitespace per
-  entry, drop empty entries, and reject any resulting path entry that still
-  contains a comma character with a clear user error (exit 2), because this
-  protocol does not define escaping for commas.
+  entry, and drop empty entries. Commas are protocol delimiters and this
+  format does not support escaping; a single path containing a comma cannot
+  be represented and must not be passed through this flag.
 - Forward the subprocess exit code as the dispatcher exit code.
 - Do no other interpretation. In particular, do not validate the workspace.
 - `--new-window` is forwarded verbatim to the worker; the dispatcher itself
@@ -485,7 +485,8 @@ exist. Use absolute
 paths. `Facts.md` is intentionally **excluded** from this list even when
 it exists: per section 8.22 it is a search-on-demand reference and must
 not be auto-attached, so agents look up only the relevant section instead
-of reading the whole file.
+of reading the whole file. Ordering is deterministic: sort the final
+absolute-path list lexically before joining into `--context-files`.
 
 ### 4.5a `Work - Move` state machine
 
@@ -1245,7 +1246,10 @@ Guidance:
      was configured by the scaffolder and must not be changed here. If the
      user wants extra worker wrappers for other AI tools, create them
      alongside `Default` in `Scripts/Workers/` following section 4.2 and
-     section 9.6. If not, skip this step.
+      section 9.6. Any added wrapper must reuse the exact same two translated
+      bootstrap sentences chosen by the scaffolder for `Default` (section 4.2),
+      including wording and punctuation; only harness invocation details may
+      differ. If not, skip this step.
   2. **Template repositories.** Ask the user, one repository at a time,
      which repositories should be part of the template in
      `Workspaces/__template__/` so new workspaces start with the right
@@ -1399,6 +1403,10 @@ Guidance:
        exists in `Prompts/Workspace Agent.md` if VS Code integration
        was requested). Integrations the user declined leave no traces
        behind.
+     - If step 1 created additional worker wrappers, each one reuses the
+       same two translated bootstrap sentences as `Scripts/Workers/Default`
+       (section 4.2). Any drift in those sentence literals is repaired
+       before proceeding.
      - Dispatcher smoke test: invoke `Scripts/Agent.<ext>` with
        `--worker Default --prompt <abs Workspace Agent path> --mode cli
        --dry-run` and confirm it prints a harness command without
@@ -2024,8 +2032,6 @@ exit code otherwise.
 - split on literal `,` characters;
 - trim outer whitespace on each token;
 - drop empty tokens;
-- if any normalized token still contains `,`, fail with exit code 2 and a
-  message naming the offending value;
 - return a comma-joined list of absolute paths.
 
 ### 9.2 `Workspace - Create`
@@ -2142,6 +2148,7 @@ Implementation requirements:
 - Build `--context-files` from existing workspace artifacts listed in
   section 4.5. **Never include `Facts.md`** in this list even when the
   file exists; Facts is a search-on-demand reference (section 8.22).
+  Sort the resulting absolute paths lexically before emitting the CSV.
 - Verifier dispatcher call is always `--mode cli`.
 
 Verification outcome handling:
@@ -2273,7 +2280,8 @@ def main():
 - Return `None` if nothing works.
 
 `parse_csv(args.context_files)` must follow the dispatcher CSV contract from
-section 9.1 (strict split/trim/drop-empty and comma-containing-entry reject).
+section 9.1 (strict split/trim/drop-empty; commas are delimiters only and
+cannot be escaped).
 
 `tail_prefix(language)` returns the translated form of:
 `After reading the files above, the user asked you to do this:`
@@ -2621,7 +2629,8 @@ and report results.
     artifacts, and confirm a `Work - Do --dry-run` invocation produces
     a dispatcher command whose `--context-files` value does **not**
     contain `Facts.md` even though the file exists (sections 4.5, 4.11,
-    9.4). Remove the scratch workspace in step 11.
+  9.4). In the same check, confirm the emitted absolute paths are in
+  lexical order. Remove the scratch workspace in step 11.
 
     Also verify the Workspace Agent prompt spec contains no automatic
     cross-workspace Facts merge, no workspace-wide Facts overwrite, and
