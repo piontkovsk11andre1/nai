@@ -397,7 +397,8 @@ Schema versioning:
   `workflow_schema: 1` at top level.
 - Unknown task schema values are hard errors (user/precondition error, exit
   code 2) in queue-touching scripts.
-- Missing `workflow_schema` in legacy frontmatter is treated as schema `1`.
+- Missing `workflow_schema` in metadata frontmatter is also a hard error
+  (user/precondition error, exit code 2).
 
 - In `Next/`, tasks normally start without metadata frontmatter.
 - On `Next -> Current`, `Work - Move` prepends rollback metadata
@@ -2612,8 +2613,8 @@ Implementation requirements:
 - Read/write task files as UTF-8.
 - Use metadata-frontmatter helpers compatible with section 4.4.
 - Validate task frontmatter schema per section 4.3a when frontmatter is
-  present: accept `workflow_schema: 1` and legacy-missing schema as `1`;
-  reject unknown schema values with user/precondition error (2).
+  present: accept only `workflow_schema: 1`; reject unknown or missing
+  schema values with user/precondition error (2).
 - Build repeated `--context-file` flags from existing workspace artifacts
   listed in section 4.5.
   **Never include `Facts.md`** in this list even when the
@@ -2689,8 +2690,8 @@ Behavior follows section 4.6 step by step. Provide:
 - Task-file rewrites and moves performed by undo must be policy-guarded via
   section 9.0.
 - `Work - Undo` validates task frontmatter schema per section 4.3a for tasks
-  it reads/mutates and fails with user/precondition error (2) on unknown
-  schema values.
+  it reads/mutates and fails with user/precondition error (2) on unknown or
+  missing schema values.
 - `Work - Undo` acquires the workspace lock before preflight and mutation and
   releases it on every exit path; it supports `--force-unlock` for explicit
   lock recovery.
@@ -2751,7 +2752,7 @@ Additional requirements:
   for every candidate considered in source queues.
 - `Work - Move` validates task frontmatter schema per section 4.3a for source
   task content before transform/mutation and fails with user/precondition
-  error (2) on unknown schema values.
+  error (2) on unknown or missing schema values.
 - `--task` values that do not match canonical naming are rejected with
   exit code 2 before any file mutation, using the mandatory five-line
   filename-validation error format from section 4.3.
@@ -3440,8 +3441,8 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
     lock acquisition waits up to the configured timeout, contention exits with
     user/precondition error, and lock breaking is possible only through
     explicit `--force-unlock` flows;
-  - unknown task schema versions are rejected with user/precondition errors
-    before mutation by queue-touching scripts;
+  - unknown or missing task schema versions are rejected with
+    user/precondition errors before mutation by queue-touching scripts;
   - policy denials return user/precondition errors with actionable recovery.
 
 If any check fails, repair before handoff.
