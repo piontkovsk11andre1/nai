@@ -244,7 +244,7 @@ A thin transport layer with this CLI:
 - `--mode cli|tui` (optional, default `cli`)
 - `--tail <text>` (optional)
 - `--agent-name <text>` (optional, metadata)
-- `--context-files <comma-separated>` (optional)
+- `--context-file <path>` (optional, repeatable)
 - `--dry-run` (optional flag)
 - `--new-window` (optional flag, passthrough hint for the worker)
 
@@ -260,12 +260,12 @@ Behavior:
   `Scripts/Workers/` directory (this rules out `..`, absolute paths, or
   any other escape attempt).
 - Build a subprocess command that invokes the resolved worker script with all
-  passthrough arguments, normalizing `--context-files` to absolute paths.
-  CSV parsing is strict: split on literal commas, trim outer whitespace per
-  entry, and drop empty entries. Commas are protocol delimiters and this
-  format does not support escaping; a single path containing a comma cannot
-  be represented and must not be passed through this flag. If normalization
-  yields no paths, omit `--context-files` entirely.
+  passthrough arguments, normalizing each provided `--context-file` value to
+  an absolute path. Empty values are rejected. After normalization, pass
+  context files to workers using repeated `--context-file <absolute-path>`
+  flags. Preserve deterministic ordering by sorting the final absolute-path
+  list lexically before emitting flags. If no normalized paths remain, omit
+  context-file flags entirely.
 - Run the worker subprocess with live stdio passthrough: worker stdout/stderr
   are visible in the dispatcher's CLI output as they are produced. The
   dispatcher must not buffer/capture worker output for protocol parsing.
@@ -293,6 +293,10 @@ Required behavior:
   bytes on disk;
 - all mutating scripts call shared policy helpers (section 9.0) instead of
   ad hoc direct mutation guards;
+- queue/state scripts use one shared workspace-level lock to prevent
+  concurrent queue transitions and rollback races; lock behavior is defined
+  in section 9.0 and consumed by `Work - Do`, `Work - Move`, and
+  `Work - Undo`;
 - error messages are recovery-oriented and include offending path, denied
   operation, allowed scope hint, and exact next action;
 - keep confirmations minimal: only explicit destructive/critical gates already
@@ -323,7 +327,7 @@ through. Each wrapper:
   fails, also try `%APPDATA%\npm\<binary>.cmd` before giving up.
 - If the harness binary cannot be started, exit with code 127 and a clear
   message naming the missing binary.
-- `--context-files` is a hint only. If the harness supports attaching files,
+- `--context-file` is a hint only. If the harness supports attaching files,
   pass them; otherwise ignore silently.
 - `--new-window` is a Windows-only convenience flag used by Windows
   per-agent launchers and the top-level Windows launcher so the launching
@@ -515,6 +519,19 @@ Invoked non-interactively with these arguments:
   `--dry-run` to harness invocations so no model call is made)
 - `--verifier-timeout <seconds>` (optional positive integer; when provided,
   verifier dispatch must finish within this many seconds)
+- `--force-unlock` (optional flag; explicit workspace-lock recovery)
+
+Concurrency and lock rules:
+
+- `Work - Do` must coordinate through the shared workspace lock from section
+  9.0 while inspecting queue state and while performing post-verifier
+  reconciliation checks.
+- `Work - Do` must not hold the workspace lock while running dispatcher
+  subprocesses (execute/verifier), so verifier-owned `Work - Move` calls can
+  acquire the same lock without deadlock.
+- Whenever `Work - Do` reacquires the lock after a dispatcher call, it must
+  re-read queue state from disk and re-validate singleton/current preconditions
+  before deciding outcomes.
 
 Decision order on each invocation:
 
@@ -548,24 +565,35 @@ Decision order on each invocation:
    - If `--current-action validate-only`, skip the execution dispatcher.
    - Create a unique UTF-8 verification output file path under a
      scratch directory inside the workspace (for example `.tmp/verify-<id>.txt`).
+     Also create a unique verifier finalization token for this verifier run,
+     store it in a workspace scratch JSON file, and include it in verifier
+     instructions. Token validation is verifier-only and is enforced through
+     `Work - Move` (section 4.5a). The token record is UTF-8 and contains at
+     least: `token`, `task_file_name`, `created_utc`, `expires_utc`
+     (optional/empty allowed), and `verification_output_file`.
      Invoke the dispatcher again with the verification worker and the verify
      prompt (`Prompts/Work - Verify.md` inside the workspace). The verifier
      tail is the current task body plus a short translated instruction naming
      the absolute verification output file path and requiring the verifier to
      write its full verification output there, then pass that same path to
-     `Work - Move --verification-output-file` when finalizing. The verifier
-     dispatcher call must run with `--mode cli` regardless of the mode
+     `Work - Move --verification-output-file` and pass the generated verifier
+     token via `--finalization-token` when finalizing. The verifier dispatcher
+     call must run with `--mode cli` regardless of the mode
      requested by the caller, because the verifier must finalize state by
     invoking `Work - Move` directly. The verifier call must stream output live
     to CLI and append the same output lines to `<workspace>/log.txt` via
     `Logger` under `work-do.verify`.
     `Work - Do` must not capture verifier stdout/stderr for protocol parsing;
-    task finalization is determined only by queue state and `Work - Move`.
+    task finalization is determined by queue state and token-consistent
+    `Work - Move` finalization.
      If `--verifier-timeout` is provided and the verifier dispatcher does not
      finish before the timeout, terminate the verifier process, preserve any
-     verification output file bytes that exist, print a clear timeout error,
-       and exit 3. `Work - Do` does not perform queue transitions; the task
-       remains in `Current` until an explicit `Work - Move` call finalizes it.
+     verification output file bytes that exist, then perform lock-protected
+     reconciliation before deciding the outcome. If the task is now in
+     `Work/Done/`, report success; if it is now in `Work/Blocked/`, report
+     verification failure and exit 3; if it is still in `Work/Current/`, print
+     a clear timeout error and exit 3. `Work - Do` does not perform queue
+     transitions.
    - If the verifier dispatcher exits non-zero: print a clear error that the
      verifier failed and the task remains in `Current`, then exit with the
      verifier dispatcher's code. `Work - Do` does not perform queue
@@ -591,8 +619,9 @@ Decision order on each invocation:
      for audit/debug and are cleaned by explicit verification/cleanup flows,
      not by implicit queue transitions.
 
-Additional context passed to the dispatcher: build the `--context-files`
-value from existing artifacts in the workspace such as
+Additional context passed to the dispatcher: build repeated
+`--context-file <absolute-path>` flags from existing artifacts in the workspace
+such as
 `Issue`, `Research`, `Plan`, `Status`, `Framework`, `Notes`, `Assignments`,
 task files under `Work/Current/` and `Work/Done/`. Only include files that
 exist. Use absolute
@@ -600,7 +629,7 @@ paths. `Facts.md` is intentionally **excluded** from this list even when
 it exists: per section 8.22 it is a search-on-demand reference and must
 not be auto-attached, so agents look up only the relevant section instead
 of reading the whole file. Ordering is deterministic: sort the final
-absolute-path list lexically before joining into `--context-files`.
+absolute-path list lexically before emitting repeated `--context-file` flags.
 
 ### 4.5a `Work - Move` state machine
 
@@ -615,6 +644,9 @@ Invoked non-interactively with these arguments:
 - `--reason <text>` (optional; used when `--to blocked`)
 - `--verification-output-file <path>` (optional; UTF-8 text appended to the
   task as a verification section)
+- `--finalization-token <token>` (optional; verifier-only token used for
+  `current -> done|blocked` finalization when a verifier token is active)
+- `--force-unlock` (optional flag; explicit workspace-lock recovery)
 
 Allowed transitions are exactly:
 
@@ -638,7 +670,11 @@ Behavior:
   - destination directory must not already contain a task with the same file
     name; on collision, exit with a precondition error before any content
     rewrite or filesystem mutation.
-4. Content transforms before move:
+4. Acquire the shared workspace lock from section 9.0 before re-checking
+  source/destination preconditions and before any content rewrite, append, or
+  rename operation. Under lock, re-validate that the resolved source task still
+  exists in source and destination constraints still hold.
+5. Content transforms before move:
   - `next -> current`: capture fresh repo hashes (section 4.4) and
     write/replace rollback frontmatter with those captured values;
   - `current -> blocked`: add/update blocked-reason frontmatter field (section 4.4a)
@@ -651,7 +687,13 @@ Behavior:
   - `blocked -> current` and `blocked -> done`: strip blocked-reason field;
   - `done -> next`: strip rollback and blocked-reason fields (remove the
     frontmatter block entirely if it becomes empty).
-5. If `--verification-output-file` is provided, read it as UTF-8 and append
+  - verifier-only token gate: when transition is `current -> done` or
+    `current -> blocked` and a verifier finalization token is active for the
+    workspace, require `--finalization-token` and reject on mismatch. Validate
+    against the active token JSON record in workspace scratch: provided token
+    equals `token`, source task equals `task_file_name`, and if `expires_utc`
+    is set then finalization time is not later than `expires_utc`.
+6. If `--verification-output-file` is provided, read it as UTF-8 and append
   it to the task as a new section at EOF:
 
   ```
@@ -660,7 +702,7 @@ Behavior:
   <verbatim content>
   ```
 
-6. Move the task file by renaming from source directory to destination
+7. Move the task file by renaming from source directory to destination
   directory, preserving the file name.
 
 Exit codes: 0 success, 2 user/precondition error.
@@ -675,8 +717,12 @@ Invoked non-interactively with these arguments:
 - `--snapshot-before-undo <path>` (optional path where affected repository
   working trees are copied before destructive rollback; when omitted the
   script creates a timestamped snapshot under the workspace scratch area)
+- `--force-unlock` (optional flag; explicit workspace-lock recovery)
 
 Behavior:
+
+0. Acquire the shared workspace lock from section 9.0 before any queue or
+  repository preflight/mutation in this script.
 
 1. Read task files from `Work/Done/`. Sort by workload identifier parsed
   from canonical file-name prefix `w-<digits>. ` (ascending numeric order),
@@ -880,7 +926,7 @@ The Research Agent prompt must instruct the agent to:
   human-facing preference document only.
 - Execute prompt: `Prompts/Work - Execute.md` inside the workspace.
 - Verify prompt: `Prompts/Work - Verify.md` inside the workspace.
-- `Facts.md` is **not** added to the dispatcher's `--context-files`
+- `Facts.md` is **not** added to the dispatcher's `--context-file` flags
   even when present (see sections 4.5 and 4.5a). The Execute and Verify prompts
   are aware of it and may consult it on demand by searching for the
   relevant section title.
@@ -2093,7 +2139,7 @@ Headings: "Inputs", "Required behavior", "Output expectation".
 Guidance:
 - Inputs: the current task file and the artifacts listed in section 4.5.
   `Facts.md` exists in the workspace but is **not auto-attached** to the
-  dispatcher's `--context-files`; when a relevant project convention or
+  dispatcher's `--context-file` flags; when a relevant project convention or
   prior decision is needed, search `Facts.md` for a matching
   `## <Title>` entry by keyword and read only that entry.
 - Required behavior:
@@ -2189,7 +2235,7 @@ is explicit and manual via section 8.3.
 Read pattern: agents must **search/grep** `Facts.md` for a relevant
 `## <Title>` or keyword and read only the matching entry/entries. They
 must not read the file end-to-end. `Facts.md` is intentionally
-excluded from the dispatcher's `--context-files` for the same reason
+excluded from the dispatcher's `--context-file` flags for the same reason
 (sections 4.5 and 9.4).
 
 Version-control friendliness (the file is tracked in git): writes must
@@ -2248,6 +2294,21 @@ Required helpers:
   user/precondition error on deny with a clear recovery-oriented message.
 - `guarded_write_utf8(...)`, `guarded_append_utf8(...)`, `guarded_move(...)`,
   `guarded_delete(...)` wrappers that call `assert_allowed` before mutation.
+- `acquire_workspace_lock(workspace, role, timeout_seconds=10,
+  poll_interval_ms=200, force_unlock=False)` -> lock handle or user/precondition
+  error.
+- `release_workspace_lock(lock_handle)` -> best-effort release.
+- `read_workspace_lock(workspace)` -> lock metadata for diagnostics.
+
+Workspace lock model (required):
+- one lock per workspace path (single workspace-wide lock);
+- used by queue/state scripts to serialize queue mutations and rollback;
+- lock acquisition waits up to 10 seconds, polling every 200 ms;
+- if lock cannot be acquired in time, exit with user/precondition error (`2`)
+  and recovery guidance;
+- no automatic stale-lock breaking;
+- lock recovery is explicit only through `force_unlock=True` (surfaced by
+  script flags such as `--force-unlock`).
 
 Policy model:
 - file-boundary and operation-type only; no per-section policy;
@@ -2331,10 +2392,8 @@ def main():
     if args.workspace: cmd += ["--workspace", absolute(args.workspace)]
     if args.tail:      cmd += ["--tail", args.tail]
     if args.agent_name:cmd += ["--agent-name", args.agent_name]
-    if args.context_files:
-      normalized = normalize_csv_absolute(args.context_files)
-      if normalized:
-        cmd += ["--context-files", normalized]
+    for path in normalize_context_files(args.context_file):
+      cmd += ["--context-file", path]
     if args.dry_run:   cmd += ["--dry-run"]
     if args.new_window:cmd += ["--new-window"]
     return subprocess_run(cmd, stdout=inherit, stderr=inherit).exit_code
@@ -2351,12 +2410,14 @@ def main():
   Exit codes: 0 success, 2 user error (bad prompt, unreadable prompt, invalid
   UTF-8 prompt, or bad worker), worker's own exit code otherwise.
 
-`normalize_csv_absolute(csv_text)` contract:
-- split on literal `,` characters;
-- trim outer whitespace on each token;
-- drop empty tokens;
-- return a comma-joined list of absolute paths (or empty string when no
-  tokens remain after normalization).
+`normalize_context_files(values)` contract:
+- accepts the list of values provided through repeated
+  `--context-file <path>` flags;
+- reject empty values;
+- normalize each value to an absolute path;
+- de-duplicate while preserving deterministic lexical ordering of the final
+  absolute paths;
+- return the normalized path list (or empty list when none were provided).
 
 ### 9.2 `Workspace - Create`
 
@@ -2506,10 +2567,11 @@ Implementation requirements:
   (`next -> current`) first.
 - Read/write task files as UTF-8.
 - Use metadata-frontmatter helpers compatible with section 4.4.
-- Build `--context-files` from existing workspace artifacts listed in
-  section 4.5. **Never include `Facts.md`** in this list even when the
+- Build repeated `--context-file` flags from existing workspace artifacts
+  listed in section 4.5.
+  **Never include `Facts.md`** in this list even when the
   file exists; Facts is a search-on-demand reference (section 8.22).
-  Sort the resulting absolute paths lexically before emitting the CSV.
+  Sort the resulting absolute paths lexically before emitting repeated flags.
 - Verifier dispatcher call is always `--mode cli`.
 - For execution and verifier dispatcher calls, stream stdout/stderr live to
   CLI and mirror those lines to `<workspace>/log.txt` via `Logger` using
@@ -2519,6 +2581,12 @@ Implementation requirements:
   `Work - Move`.
 - Any filesystem mutation performed directly by `Work - Do` (for example
   scratch verification output paths) must be policy-guarded via section 9.0.
+- `Work - Do` uses lock-aware critical sections from section 4.5 and supports
+  `--force-unlock` for explicit lock recovery.
+- `Work - Do` creates a verifier token JSON record in workspace scratch for
+  each verifier run (`token`, `task_file_name`, `created_utc`, `expires_utc`,
+  `verification_output_file`) and passes only the opaque token via
+  `--finalization-token` to verifier-driven `Work - Move` calls.
 
 Verification outcome handling:
 
@@ -2527,10 +2595,13 @@ Verification outcome handling:
   Recording `DISPATCHER` in blocked frontmatter is done only via explicit
   `Work - Move --from current --to blocked --reason-kind DISPATCHER`.
 - Verifier timeout when `--verifier-timeout` is provided -> terminate the
-  verifier process, preserve existing verification output bytes, and return 3;
-  the task remains in `Current/` until explicitly moved.
+  verifier process, preserve existing verification output bytes, then perform
+  lock-protected queue reconciliation: if task is in `Done/`, return success;
+  if in `Blocked/`, return 3; if still in `Current/`, return 3 with timeout
+  error.
 - Verifier dispatcher zero when neither `--dry-run` nor `--rehearse` is set ->
-  verify that the active task was finalized by verifier through `Work - Move`:
+  verify that the active task was finalized by verifier through token-consistent
+  `Work - Move`:
   - task in `Done/` -> success;
   - task in `Blocked/` -> return 3;
   - task still in `Current/` -> invalid finalization, return 3 and keep the
@@ -2564,6 +2635,9 @@ Behavior follows section 4.6 step by step. Provide:
   `Next/`.
 - Task-file rewrites and moves performed by undo must be policy-guarded via
   section 9.0.
+- `Work - Undo` acquires the workspace lock before preflight and mutation and
+  releases it on every exit path; it supports `--force-unlock` for explicit
+  lock recovery.
 
 The implementation must refuse to run destructive rollback without `--force`,
 even when the preflight report is clean. The refusal must happen before any
@@ -2582,6 +2656,8 @@ Behavior:
 def main():
   args = parse()
   ws = resolve_workspace(args.workspace)
+  lock = acquire_workspace_lock(ws, role="work-move-script",
+                                force_unlock=args.force_unlock)
   validate_transition(args.from_state, args.to_state)
   task = resolve_source_task(ws, args.from_state, args.task)
   ensure_destination_constraints(ws, args.to_state)
@@ -2595,12 +2671,15 @@ def main():
     text = strip_blocked_reason(text)
   if args.from_state == "done" and args.to_state == "next":
     text = strip_blocked_field(strip_rollback_field(text))
+  if args.from_state == "current" and args.to_state in ("done", "blocked"):
+    assert_finalization_token_if_active(ws, args.finalization_token, task.name)
   if args.verification_output_file:
     out = read_utf8(args.verification_output_file)
     text = append_verification_section(text, out, utc_timestamp())
 
   write_utf8(task, text)
   move(task, queue_dir(ws, args.to_state) / task.name)
+  release_workspace_lock(lock)
   return 0
 ```
 
@@ -2626,6 +2705,13 @@ Additional requirements:
   it must not capture or replay worker/verifier stdout/stderr streams.
 - All task-file writes/appends/moves in `Work - Move` must use policy-guarded
   mutation helpers from section 9.0.
+- `Work - Move` acquires the workspace lock before queue validation and
+  mutation and releases it on every exit path.
+- Add `--force-unlock` (optional flag) so lock recovery is explicit when a
+  stale lock must be cleared manually.
+- `assert_finalization_token_if_active` validates against the active token
+  JSON record in workspace scratch (`token`, `task_file_name`, optional
+  `expires_utc`) and returns a user/precondition error on mismatch.
 
 Canonical invocation examples (paths shown as relative for readability):
 
@@ -2638,13 +2724,13 @@ Canonical invocation examples (paths shown as relative for readability):
 - Finalize verification success and append verifier output:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to done --verification-output-file Workspaces/my-ws/.tmp/verify.txt
+  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to done --verification-output-file Workspaces/my-ws/.tmp/verify.txt --finalization-token <token>
   ```
 
 - Finalize verification failure with explicit reason:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation"
+  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file Workspaces/my-ws/.tmp/verify.txt --finalization-token <token>
   ```
 
 - Reopen completed task:
@@ -2672,7 +2758,7 @@ def main():
         print_error("Could not start '<harness>'. Install it or update this wrapper.")
         return 127
     cmd = build_harness_command(binary, args.mode, bootstrap)
-    for path in parse_csv(args.context_files):
+    for path in normalize_context_files(args.context_file):
         cmd += harness_attach_flags(path)        # may be []
     if args.dry_run:
         print(escape_for_shell(cmd)); return 0
@@ -2691,9 +2777,8 @@ def main():
 - On Windows, if not found, try `%APPDATA%\npm\<name>.cmd`.
 - Return `None` if nothing works.
 
-`parse_csv(args.context_files)` must follow the dispatcher CSV contract from
-section 9.1 (strict split/trim/drop-empty; commas are delimiters only and
-cannot be escaped).
+`normalize_context_files(args.context_file)` follows the dispatcher contract
+from section 9.1 for repeated `--context-file` values.
 
 `tail_prefix(language)` returns the translated form of:
 `After reading the files above, the user asked you to do this:`
@@ -2996,7 +3081,7 @@ from `claude --help` at scaffold time per interview question 5.
   starts the interactive session).
 - Context attach: Claude Code does not take ad hoc file flags from the
   CLI; mention the files inside the bootstrap text or drop the
-  `--context-files` hint.
+  `--context-file` hints.
 
 Resolution: try `which claude`. Adjust to your local installation.
 
@@ -3145,6 +3230,15 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
      `Work - Do` exits non-zero, keeps the task in `Work/Current/`, and does
      not move queue files automatically. If blocked metadata is required,
      confirm it is recorded only through explicit `Work - Move` calls.
+   - Verifier token gate check: when a verifier token is active for the
+     workspace, confirm `Work - Move --from current --to done|blocked`
+     rejects missing or mismatched `--finalization-token` and accepts a
+     matching token. Also confirm task-name mismatch and expired-token cases
+     are rejected based on the active token JSON record.
+   - Timeout reconciliation check: force a verifier timeout at the boundary
+     and confirm post-timeout reconciliation prefers finalized queue state
+     (`Done/` or `Blocked/`) over raw timeout status; only unresolved
+     `Current/` remains a timeout failure.
    - Output visibility check: in a scratch workspace, run one execution and
      one verifier pass and confirm their stdout/stderr are visible live in CLI
      and mirrored into `<workspace>/log.txt` under `work-do.execute` and
@@ -3176,7 +3270,7 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
 11. `Work - Do` context-file selection excludes `Facts.md`. Create a
     scratch workspace, write a non-empty `Facts.md` next to the usual
     artifacts, and confirm a `Work - Do --dry-run` invocation produces
-    a dispatcher command whose `--context-files` value does **not**
+  dispatcher arguments where repeated `--context-file` flags do **not**
     contain `Facts.md` even though the file exists (sections 4.5, 4.11,
   9.4). In the same check, confirm the emitted absolute paths are in
   lexical order. Remove the scratch workspace in step 12.
@@ -3265,6 +3359,10 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
   - path escape attempts (`..`, absolute out-of-root targets) are denied;
   - patch and full rewrite paths are treated uniformly as `write` to the
     final target;
+  - workspace lock behavior is enforced for queue/state scripts:
+    lock acquisition waits up to the configured timeout, contention exits with
+    user/precondition error, and lock breaking is possible only through
+    explicit `--force-unlock` flows;
   - policy denials return user/precondition errors with actionable recovery.
 
 If any check fails, repair before handoff.
