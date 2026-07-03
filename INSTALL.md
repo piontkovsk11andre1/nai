@@ -716,7 +716,8 @@ Behavior:
 ### 4.9 `Status` document columns
 
 Whatever the chosen language and filename, the `Status` artifact contains one
-table with exactly these columns in this order:
+table with exactly these columns in this order (translated seamlessly into the
+chosen language):
 
 `Part | Expected | Current | Completion % | Last Checked`
 
@@ -2827,9 +2828,12 @@ Protocol:
    - the script refused the call earlier when `--synced` was omitted
      (re-run a separate negative case to confirm exit code 2).
 
-9. **Restore.** Delete every child of the workflow root **except**
-   `INSTALL.md` (the user-supplied input), then copy the snapshot from
-   step 1 back into place verbatim. Verify by spot-checking that:
+9. **Restore.** Perform a provenance-safe restore. Do **not**
+  blanket-delete workflow-root children. Use the baseline inventory from
+  section 3 and the rehearsal provenance to identify only paths created
+  or modified by the rehearsal, then restore those paths from the snapshot
+  from step 1. Preserve all pre-existing non-rehearsal paths. Verify by
+  spot-checking that:
    - the rehearsal repo directories (`RehearsalA/`, `RehearsalB/`,
      `RehearsalC/`) are gone from `Workspaces/__template__/`,
    - `__archive__/` is empty,
