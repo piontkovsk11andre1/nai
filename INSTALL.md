@@ -355,12 +355,13 @@ through. Each wrapper:
   message naming the missing binary.
 - `--context-file` is a hint only. If the harness supports attaching files,
   pass them; otherwise ignore silently.
-- `--new-window` is a Windows-only convenience flag used by Windows
-  per-agent launchers and the top-level Windows launcher so the launching
-  console does not stay blocked. When set and `--mode tui` and the OS is
-  Windows, the wrapper spawns the harness in a detached new console (e.g.
-  `subprocess.Popen` with `CREATE_NEW_CONSOLE`) and returns 0 immediately
-  without waiting. Ignored on other OSes or in `cli` mode.
+- `--new-window` is a cross-platform convenience flag used by per-agent
+  launchers and the top-level launcher so the launching console does not stay
+  blocked. When set and `--mode tui`, the wrapper starts the harness in a
+  detached terminal/session on the current OS and returns 0 immediately
+  without waiting. On Windows use a detached new console (e.g.
+  `subprocess.Popen` with `CREATE_NEW_CONSOLE`); on macOS/Linux use the
+  platform-idiomatic detached terminal/session launch. Ignored in `cli` mode.
 - In non-detached execution, stream harness stdout/stderr through the wrapper
   to the caller CLI output as they are produced; do not capture them for
   parsing.
@@ -398,7 +399,9 @@ directories: `Next/`, `Current/`, `Blocked/`, `Done/`.
   naming any offending file.
 - Filename validation errors must use a recovery-oriented format that includes
   the offending file path, the canonical pattern, one example, and the exact
-  next action. Required shape, translated except for the protocol pattern:
+  next action. Required shape: keep exactly five lines in this order.
+  Translate the sentence text, but keep the protocol token on the
+  `Expected pattern:` line exactly as `w-NNNN. <title>.md`.
 
   ```
   Error: task file name is not canonical.
@@ -575,14 +578,23 @@ Concurrency and lock rules:
 - Whenever `Work - Do` reacquires the lock after a dispatcher call, it must
   re-read queue state from disk and re-validate singleton/current preconditions
   before deciding outcomes.
+- Verifier-token lifecycle operations are lock-scoped: checking for an active
+  token record, replacing expired records, and writing the new token record
+  must happen while holding the same workspace lock, then be committed
+  atomically before verifier dispatch.
 
 Decision order on each invocation:
 
-1. Validate `Work/Current/` task filenames against section 4.3 before
-  any action; on mismatch exit non-zero using the mandatory five-line
-  filename-validation error format from section 4.3.
-  If more than one task file exists in `Current/`, exit non-zero with a clear
-  precondition error because `Current/` is a singleton queue.
+1. Under workspace lock, perform one queue-state snapshot preflight:
+  - validate `Work/Current/` task filenames against section 4.3; on mismatch
+    exit non-zero using the mandatory five-line filename-validation error
+    format from section 4.3;
+  - if more than one task file exists in `Current/`, exit non-zero with a
+    clear precondition error because `Current/` is a singleton queue;
+  - if exactly one task exists in `Current/`, record its file name as the
+    active task and continue;
+  - if `Current/` is empty, evaluate step 2 in the same lock-protected
+    snapshot and exit accordingly.
 
 2. If `Current` is empty:
    - If `Blocked` is non-empty, validate `Work/Blocked/` task filenames against
@@ -606,19 +618,20 @@ Decision order on each invocation:
    - If `--current-action restart` and the dispatcher exits non-zero: print a
      clear message that the task remains in `Current` and exit with that code.
    - If `--current-action validate-only`, skip the execution dispatcher.
-   - Create a unique UTF-8 verification output file path under a
-     scratch directory inside the workspace (for example `.tmp/verify-<id>.txt`).
-     Before creating a new verifier token, check whether an unexpired active
-     verifier token record already exists for this workspace. If one exists,
-     exit with user/precondition error (2) explaining that another verifier
-     run is already active and must finish or expire first. Expired token
-     records may be replaced.
+   - Use the canonical workspace scratch root `<workspace>/.tmp/workflow/`.
+     Create a unique UTF-8 verification output file under that root (for
+     example `<workspace>/.tmp/workflow/verify-<id>.txt`).
+     Before creating a new verifier token, reacquire the workspace lock and
+     check whether an unexpired active verifier token record already exists
+     for this workspace. If one exists, exit with user/precondition error (2)
+     explaining that another verifier run is already active and must finish or
+     expire first. Expired token records may be replaced.
      Also create a unique verifier finalization token for this verifier run,
-     store it in a workspace scratch JSON file, and include it in verifier
-     instructions. Token validation is verifier-only and is enforced through
-     `Work - Move` (section 4.5a). The token record is UTF-8 and contains at
-    least: `token`, `task_file_name`, `created_utc`, optional
-    `expires_utc`, and `verification_output_file`.
+     store it atomically in a workspace scratch JSON file under the same
+     scratch root, and include it in verifier instructions. Token validation is
+     verifier-only and is enforced through `Work - Move` (section 4.5a). The
+     token record is UTF-8 and contains at least: `token`, `task_file_name`,
+     `created_utc`, optional `expires_utc`, and `verification_output_file`.
     If `--verifier-timeout` is provided, token expiry is required. Compute
     token TTL from `--finalization-token-ttl-seconds` when provided, otherwise
     use `verifier-timeout + 300` seconds. When provided explicitly, token TTL
@@ -682,7 +695,7 @@ Decision order on each invocation:
      dispatcher calls and skip post-verify finalization checks. `Work - Do`
      does not mutate queue state in rehearse mode.
    - Verification output files under workspace scratch (for example
-     `.tmp/verify-<id>.txt`) and the verifier token JSON file are workflow
+     `.tmp/workflow/verify-<id>.txt`) and the verifier token JSON file are workflow
      scratch artifacts created by `Work - Do`. On a terminal reconciled
      outcome (`Done` or `Blocked`), `Work - Do` cleans only the scratch
      artifacts from that run. On non-terminal outcomes (for example timeout or
@@ -693,12 +706,10 @@ Additional context passed to the dispatcher: build repeated
 `--context-file <absolute-path>` flags from existing artifacts in the workspace
 such as
 `Issue`, `Research`, `Plan`, `Status`, `Framework`, `Notes`, `Assignments`,
+`Facts`,
 task files under `Work/Current/` and `Work/Done/`. Only include files that
 exist. Use absolute
-paths. `Facts.md` is intentionally **excluded** from this list even when
-it exists: per section 8.22 it is a search-on-demand reference and must
-not be auto-attached, so agents look up only the relevant section instead
-of reading the whole file. Ordering is deterministic: sort the final
+paths. Ordering is deterministic: sort the final
 absolute-path list lexically before emitting repeated `--context-file` flags.
 
 ### 4.5a `Work - Move` state machine
@@ -940,9 +951,8 @@ Behavior:
   `--prompt Prompts/<Agent>.md` (relative to the workspace; `<Agent>` means
   the effective mapped prompt basename for that role when section 5.2
   localization is enabled), `--workspace .`,
-  `--mode tui`, and `--agent-name "<Agent>"`. On Windows, also pass
-  `--new-window` so the worker wrapper can detach into a new console per
-  section 4.2.
+  `--mode tui`, `--agent-name "<Agent>"`, and `--new-window` so the worker
+  wrapper can detach per section 4.2.
 
 ### 4.8 `Workspace - Remove` (archive only)
 
@@ -1032,10 +1042,8 @@ The Research Agent prompt must instruct the agent to:
   human-facing preference document only.
 - Execute prompt: `Prompts/Work - Execute.md` inside the workspace.
 - Verify prompt: `Prompts/Work - Verify.md` inside the workspace.
-- `Facts.md` is **not** added to the dispatcher's `--context-file` flags
-  even when present (see sections 4.5 and 4.5a). The Execute and Verify prompts
-  are aware of it and may consult it on demand by searching for the
-  relevant section title.
+- `Facts.md` is treated as a normal workspace artifact for dispatcher
+  `--context-file` selection when present.
 
 ### 4.12 Installation report gating after installation
 
@@ -1332,7 +1340,7 @@ listed in the manifest tree above; the verification cleanup pass
 alone but treats stray `log.txt` files outside `Workspaces/<name>/` as
 removable scratch.
 
-Verification scratch files (for example `.tmp/verify-<id>.txt`) are also
+Verification scratch files (for example `.tmp/workflow/verify-<id>.txt`) are also
 workspace-local scratch artifacts. They are not part of the template
 manifest. `Work - Do` removes its own run-local verifier scratch/token files
 after a terminal reconciled outcome (`Done` or `Blocked`) and keeps them on
@@ -2283,10 +2291,10 @@ Headings: "Inputs", "Required behavior", "Output expectation".
 
 Guidance:
 - Inputs: the current task file and the artifacts listed in section 4.5.
-  `Facts.md` exists in the workspace but is **not auto-attached** to the
-  dispatcher's `--context-file` flags; when a relevant project convention or
-  prior decision is needed, search `Facts.md` for a matching
-  `## <Title>` entry by keyword and read only that entry.
+  `Facts.md` exists in the workspace and may be attached through dispatcher
+  `--context-file` flags; when a relevant project convention or prior decision
+  is needed, search `Facts.md` for a matching `## <Title>` entry by keyword
+  and read only that entry.
 - Required behavior:
   - apply changes scoped to the active task's intent;
   - report what was changed and what remains;
@@ -2310,9 +2318,9 @@ Guidance:
 Headings: "Inputs", "Required behavior", "Output expectation".
 
 Guidance:
-- Inputs: same as Execute. `Facts.md` is likewise present but not
-  auto-attached; search by section title for any convention or decision
-  needed to judge whether the change is acceptable.
+- Inputs: same as Execute. `Facts.md` is likewise present and may be attached;
+  search by section title for any convention or decision needed to judge
+  whether the change is acceptable.
 - Required behavior: validate that execution matches task intent; run
   verification steps relevant to the change. When the verifier tail names a
   verification output file path, write the full verification output to that
@@ -2399,9 +2407,7 @@ is explicit and manual via section 8.3.
 
 Read pattern: agents must **search/grep** `Facts.md` for a relevant
 `## <Title>` or keyword and read only the matching entry/entries. They
-must not read the file end-to-end. `Facts.md` is intentionally
-excluded from the dispatcher's `--context-file` flags for the same reason
-(sections 4.5 and 9.4).
+must not read the file end-to-end.
 
 Version-control friendliness (the file is tracked in git): writes must
 produce minimal, line-stable diffs.
@@ -2474,6 +2480,11 @@ Required helpers:
 - `release_workspace_lock(lock_handle)` -> best-effort release.
 - `read_workspace_lock(workspace)` -> lock metadata for diagnostics.
 
+Runtime prerequisite check (required):
+- scripts that execute git commands must verify `git` is available on PATH
+  before first git invocation; if missing, exit `127` with a clear message
+  naming the required binary and next action.
+
 Workspace lock model (required):
 - one lock per workspace path (single workspace-wide lock);
 - used by queue/state scripts to serialize queue mutations and rollback;
@@ -2504,7 +2515,8 @@ Policy model:
 - full-file rewrite is a normal `write` operation;
 - patch-based edits are treated exactly as `write` to the final target path;
 - temporary scratch files are allowed only under explicit workflow scratch
-  locations.
+  locations. Canonical workflow scratch for workspace-scoped scripts is
+  `<workspace>/.tmp/workflow/`.
 
 Minimum policy profile matrix (required baseline):
 - `workspace-create-script`:
@@ -2518,7 +2530,8 @@ Minimum policy profile matrix (required baseline):
     the targeted workspace path;
   - must not mutate unrelated sibling workspaces.
 - `work-do-script`:
-  - may write workspace scratch outputs;
+  - may write workspace scratch outputs only under
+    `<workspace>/.tmp/workflow/`;
   - must not perform queue transitions;
   - must not directly mutate queue state files as a substitute for
     `Work - Move`.
@@ -2721,8 +2734,11 @@ Helpers:
 - `worktree_primary_repo(repo)`: if `<repo>/.git` is a file, parse its
   `gitdir:` value. The value may be absolute or relative; resolve
   relative paths against the directory containing the `.git` file (i.e.
-  `<repo>/`) before pattern-matching. If the resolved path matches
-  `<primary>/.git/worktrees/<name>`, return `<primary>`. Otherwise
+  `<repo>/`) before pattern-matching. Normalize both candidate and matched
+  paths with the OS-native canonicalizer (`realpath`/equivalent) and, on
+  case-insensitive filesystems, case-normalize before comparison. Accept both
+  native and POSIX-style separators while parsing `gitdir:`. If the resolved
+  path matches `<primary>/.git/worktrees/<name>`, return `<primary>`. Otherwise
   return `None`.
 - `git_worktree_remove(primary, repo, force)`: run
   `git -C <primary> worktree remove <repo> [--force]`.
@@ -2744,6 +2760,9 @@ the existing task in `Work/Current/`.
 Implementation requirements:
 
 - Discover task files in queue directories by lexical file-name order.
+- Perform the initial queue-state decision snapshot under workspace lock and,
+  after each dispatcher call, reacquire the lock and re-validate singleton
+  `Current/` preconditions before deciding outcomes.
 - Validate discovered `Work/Current/` task filenames against canonical naming
   from section 4.3 before action; fail fast on mismatch using the mandatory
   five-line filename-validation error format from section 4.3.
@@ -2760,8 +2779,6 @@ Implementation requirements:
   schema values with user/precondition error (2).
 - Build repeated `--context-file` flags from existing workspace artifacts
   listed in section 4.5.
-  **Never include `Facts.md`** in this list even when the
-  file exists; Facts is a search-on-demand reference (section 8.22).
   Sort the resulting absolute paths lexically before emitting repeated flags.
 - Verifier dispatcher call is always `--mode cli`.
 - For execution and verifier dispatcher calls, stream stdout/stderr live to
@@ -2781,7 +2798,8 @@ Implementation requirements:
   `--finalization-token` to verifier-driven `Work - Move` calls.
 - `Work - Do` enforces one active verifier run per workspace: if an unexpired
   active token record already exists, fail with user/precondition error (2)
-  before verifier dispatch; expired records may be replaced.
+  before verifier dispatch; expired records may be replaced. Active-token
+  check plus token-record write is a single lock-protected critical section.
 - `Work - Do` supports `--finalization-token-ttl-seconds` (positive integer,
   no maximum). If `--verifier-timeout` is set, token expiry is required:
   enforce `finalization-token-ttl-seconds >= verifier-timeout + 300` when
@@ -2953,13 +2971,13 @@ Canonical invocation examples (paths shown as relative for readability):
 - Finalize verification success and append verifier output:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to done --verification-output-file Workspaces/my-ws/.tmp/verify.txt --finalization-token <token>
+  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to done --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
   ```
 
 - Finalize verification failure with explicit reason:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file Workspaces/my-ws/.tmp/verify.txt --finalization-token <token>
+  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
   ```
 
 - Reopen completed task:
@@ -2991,8 +3009,8 @@ def main():
         cmd += harness_attach_flags(path)        # may be []
     if args.dry_run:
         print(escape_for_shell(cmd)); return 0
-    if args.new_window and args.mode == "tui" and is_windows():
-      spawn_detached_new_console(cmd, cwd=workdir)
+    if args.new_window and args.mode == "tui":
+      spawn_detached_new_terminal(cmd, cwd=workdir)
         return 0
     try:
       return subprocess_run(cmd, cwd=workdir, stdout=inherit, stderr=inherit).exit_code
@@ -3012,9 +3030,10 @@ from section 9.1 for repeated `--context-file` values.
 `tail_prefix(language)` returns the translated form of:
 `After reading the files above, the user asked you to do this:`
 
-`spawn_detached_new_console(cmd, cwd)` starts the harness in a new console
-window detached from the launching process. On Python/Windows this is
-`subprocess.Popen(cmd, cwd=cwd, creationflags=CREATE_NEW_CONSOLE)`. The
+`spawn_detached_new_terminal(cmd, cwd)` starts the harness in a detached
+interactive terminal/session on the current OS. On Python/Windows this is
+`subprocess.Popen(cmd, cwd=cwd, creationflags=CREATE_NEW_CONSOLE)`; on
+macOS/Linux use the platform-idiomatic detached terminal/session launch. The
 wrapper returns 0 immediately without waiting on the child.
 
 Working directory for the harness subprocess is the resolved `--workspace`
@@ -3204,7 +3223,8 @@ exec "<interpreter>" "<abs path to Scripts/Dispatcher.<ext>>" \
   --worker "Default" \
   --prompt "$prompt_path" \
   --mode tui \
-  --agent-name "Open Agent"
+  --agent-name "Open Agent" \
+  --new-window
 ```
 
 Per-workspace launcher:
@@ -3218,7 +3238,8 @@ exec "<interpreter>" "<abs path to Scripts/Dispatcher.<ext>>" \
   --prompt "<prompt path>" \
   --workspace "." \
   --mode tui \
-  --agent-name "<Agent Name>"
+  --agent-name "<Agent Name>" \
+  --new-window
 ```
 
 For Go launchers, use `go run` semantics instead of a single interpreter
@@ -3234,7 +3255,7 @@ Top-level launcher:
 [Desktop Entry]
 Type=Application
 Name=Open Agent
-Exec=sh -c 'if [ -f "$1/Installation Report.md" ]; then prompt_path="$1/Prompts/Workspace Agent.md"; else prompt_path="$1/Prompts/Installation Agent.md"; fi; if [ ! -f "$prompt_path" ]; then printf "%s\n" "Selected prompt not found: $prompt_path" >&2; exit 2; fi; case "$prompt_path" in "$1/Prompts/"*) ;; *) printf "%s\n" "Selected prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;; esac; exec <interpreter> "<abs path to Scripts/Dispatcher.<ext>>" --worker "Default" --prompt "$prompt_path" --mode tui --agent-name "Open Agent"' sh "<workflow root>"
+Exec=sh -c 'if [ -f "$1/Installation Report.md" ]; then prompt_path="$1/Prompts/Workspace Agent.md"; else prompt_path="$1/Prompts/Installation Agent.md"; fi; if [ ! -f "$prompt_path" ]; then printf "%s\n" "Selected prompt not found: $prompt_path" >&2; exit 2; fi; case "$prompt_path" in "$1/Prompts/"*) ;; *) printf "%s\n" "Selected prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;; esac; exec <interpreter> "<abs path to Scripts/Dispatcher.<ext>>" --worker "Default" --prompt "$prompt_path" --mode tui --agent-name "Open Agent" --new-window' sh "<workflow root>"
 Path=<workflow root>
 Terminal=true
 ```
@@ -3248,7 +3269,7 @@ Per-workspace launcher:
 [Desktop Entry]
 Type=Application
 Name=<launcher label>
-Exec=<interpreter> "<abs path to Scripts/Dispatcher.<ext>>" --worker "Default" --prompt "<prompt path>" --workspace "<workspace path or omit>" --mode tui --agent-name "<Agent Name>"
+Exec=<interpreter> "<abs path to Scripts/Dispatcher.<ext>>" --worker "Default" --prompt "<prompt path>" --workspace "<workspace path or omit>" --mode tui --agent-name "<Agent Name>" --new-window
 Path=<working directory>
 Terminal=true
 ```
@@ -3514,7 +3535,7 @@ Verification execution order (compact anti-drift guard):
      and mirrored into `<workspace>/log.txt` under `work-do.execute` and
      `work-do.verify`.
    - Scratch-file lifecycle check: confirm verification output files under
-       workspace scratch (for example `.tmp/verify-<id>.txt`) and verifier token
+      workspace scratch (for example `.tmp/workflow/verify-<id>.txt`) and verifier token
        JSON files are created per run; on terminal reconciled outcomes
        (`Done/Blocked`) `Work - Do` removes that run's scratch artifacts, while
        non-terminal outcomes retain them for troubleshooting.
@@ -3540,13 +3561,13 @@ Verification execution order (compact anti-drift guard):
   in `Work/Current/` and confirm `Work - Do` exits non-zero with a clear
   precondition error before invoking any dispatcher.
 
-11. `Work - Do` context-file selection excludes `Facts.md`. Create a
-    scratch workspace, write a non-empty `Facts.md` next to the usual
-    artifacts, and confirm a `Work - Do --dry-run` invocation produces
-  dispatcher arguments where repeated `--context-file` flags do **not**
-    contain `Facts.md` even though the file exists (sections 4.5, 4.11,
-  9.4). In the same check, confirm the emitted absolute paths are in
-  lexical order. Remove the scratch workspace in step 12.
+11. `Work - Do` context-file selection treats `Facts.md` as a normal
+    artifact. Create a scratch workspace, write a non-empty `Facts.md` next
+    to the usual artifacts, and confirm a `Work - Do --dry-run` invocation
+    may include `Facts.md` in repeated `--context-file` flags when present
+    (sections 4.5, 4.11, 9.4). In the same check, confirm the emitted
+    absolute paths are in lexical order. Remove the scratch workspace in
+    step 12.
 
     Also verify the Workspace Agent prompt spec contains no automatic
     cross-workspace Facts merge, no workspace-wide Facts overwrite, and
@@ -3626,10 +3647,10 @@ Verification execution order (compact anti-drift guard):
   applies only to manifest-managed portions plus known run provenance; it must
   not fail on pre-existing baseline paths outside manifest management.
 
-22. Windows detach semantics check (Windows installs only): verify worker
-  wrapper logic for `--new-window` + `--mode tui` spawns a detached new
-  console and returns 0 immediately without waiting; verify this branch is
-  ignored for `cli` mode and on non-Windows OSes.
+22. Detach semantics check (OS-specific): verify worker wrapper logic for
+  `--new-window` + `--mode tui` spawns a detached interactive
+  terminal/session on the current OS and returns 0 immediately without
+  waiting; verify this branch is ignored for `cli` mode.
 
 23. No-implicit-push safety check: verify generated prompts and script
   guidance never perform `git push` automatically; push operations must
@@ -3651,6 +3672,8 @@ Verification execution order (compact anti-drift guard):
   - lock-file creation is atomic (`O_CREAT|O_EXCL` or language-equivalent);
   - workflow-root lock behavior protects append-only updates to global
     `Workspaces/Backlog.md` and `Workspaces/Changelog.md`;
+  - git-backed scripts fail fast with exit 127 and a clear message when
+    `git` is unavailable on PATH;
   - unknown or missing task schema versions are rejected with
     user/precondition errors before mutation by queue-touching scripts;
   - policy denials return user/precondition errors with actionable recovery.
