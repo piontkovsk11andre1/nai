@@ -793,6 +793,8 @@ Invoked with:
 - `--workspace <name>` (required; a single path-safe segment under the
   `Workspaces` root)
 - `--branch <branch-name>` (required)
+- `--sync-template-repos` (optional flag; when set, run
+  `git pull --ff-only` on template repos that have configured upstreams)
 
 Behavior:
 
@@ -825,8 +827,15 @@ Behavior:
      entire create with a clear message naming the repo and instructing the
      user to commit, stash, or discard changes in the template repo first.
    - Detect the currently checked-out branch in the template repo.
-   - If the current branch has a configured upstream, run `git pull --ff-only`
-     in the template repo. If it does not, skip the pull.
+   - Template pull behavior is opt-in. By default (flag omitted), do not run
+     any network pull and create from local template state only.
+   - If `--sync-template-repos` is set and the current branch has a
+     configured upstream, run `git pull --ff-only` in the template repo.
+     If it does not have an upstream, skip the pull.
+   - If `--sync-template-repos` is set and a pull fails (for example offline
+     or ff-only failure), abort create with a clear error naming repo/branch
+     and suggesting retry without `--sync-template-repos` or after fixing
+     remote/network state.
    - If a local branch with the requested workspace branch name already exists
     in that repo, attach a worktree at `<workspace-name>/<repo-name>` to it.
      Otherwise create a new branch from `HEAD` and create the worktree.
@@ -2501,7 +2510,7 @@ def main():
       copy(child, target / child.name)
     for repo in repos:
       current = git_current_branch(repo)
-      if has_upstream(repo, current):
+      if args.sync_template_repos and has_upstream(repo, current):
         git_pull_ff_only(repo)
       if branch_exists(repo, args.branch):
         git_worktree_add(repo, target/repo.name, args.branch)
@@ -2902,9 +2911,10 @@ inspection):
 - `Work - Undo`: `work-undo.start`, `work-undo.idle`,
   `work-undo.preflight`, `work-undo.rollback`, `work-undo.done`.
 - `Workspace - Create`: `workspace-create.init`,
-  `workspace-create.pull` (emitted before each `git pull --ff-only` on a
-  template repo whose current branch has a configured upstream; the
-  message names the repo and the branch being fast-forwarded),
+  `workspace-create.pull` (emitted only when `--sync-template-repos` is set,
+  before each `git pull --ff-only` on a template repo whose current branch has
+  a configured upstream; the message names the repo and the branch being
+  fast-forwarded),
   `workspace-create.worktree`, `workspace-create.done`.
 - `Workspace - Remove`: `workspace-archive.start`,
   `workspace-archive.blocked`, `workspace-archive.snapshot`,
@@ -3277,11 +3287,17 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
 6a. `Workspace - Create` resilience check (including submodules): in a scratch
   template setup with at least one repo that has submodules, confirm create:
   (1) refuses dirty template repos before any workspace mutation,
-  (2) runs recursive submodule sync/update after worktree attach,
-  (3) validates declared submodule paths exist,
-  (4) rolls back the partially created workspace directory on any simulated
+  (2) by default (without `--sync-template-repos`) performs no template
+  network pull and succeeds from local template state,
+  (3) when `--sync-template-repos` is set, attempts `git pull --ff-only`
+  only for repos with configured upstreams and emits `workspace-create.pull`,
+  (4) if opt-in pull fails (offline/ff-only failure), aborts with a clear
+  error naming repo/branch and retry guidance,
+  (5) runs recursive submodule sync/update after worktree attach,
+  (6) validates declared submodule paths exist,
+  (7) rolls back the partially created workspace directory on any simulated
   failure during attach/submodule/launcher phases,
-  (5) local-only template repos are created deterministically on branch
+  (8) local-only template repos are created deterministically on branch
   `main` (for example via `git init -b main`) so later verification does
   not depend on machine-level git defaults.
 7. `Work - Do` execution-only ownership check:
