@@ -2277,25 +2277,25 @@ def main():
     args = parse()
     bootstrap = "Read the file at '" + absolute(args.prompt) + \
                 "' and follow the instructions exactly."
-  if args.tail and args.tail.strip():
-    bootstrap += "\n\n" + tail_prefix(language) + "\n" + args.tail
-  binary = resolve_harness_binary("opencode")  # or chosen harness
-  if binary is None:
-    print_error("Could not start '<harness>'. Install it or update this wrapper.")
-    return 127
-  cmd = build_harness_command(binary, args.mode, bootstrap)
-  for path in parse_csv(args.context_files):
-    cmd += harness_attach_flags(path)        # may be []
-  if args.dry_run:
-    print(escape_for_shell(cmd)); return 0
-  if args.new_window and args.mode == "tui" and is_windows():
-    spawn_detached_new_console(cmd, cwd=args.workspace or cwd)
-    return 0
-  try:
-    return subprocess_run(cmd, cwd=args.workspace or cwd).exit_code
-  except missing_binary:
-    print_error("Could not start '<harness>'.")
-    return 127
+    if args.tail and args.tail.strip():
+        bootstrap += "\n\n" + tail_prefix(language) + "\n" + args.tail
+    binary = resolve_harness_binary("opencode")  # or chosen harness
+    if binary is None:
+        print_error("Could not start '<harness>'. Install it or update this wrapper.")
+        return 127
+    cmd = build_harness_command(binary, args.mode, bootstrap)
+    for path in parse_csv(args.context_files):
+        cmd += harness_attach_flags(path)        # may be []
+    if args.dry_run:
+        print(escape_for_shell(cmd)); return 0
+    if args.new_window and args.mode == "tui" and is_windows():
+        spawn_detached_new_console(cmd, cwd=args.workspace or cwd)
+        return 0
+    try:
+        return subprocess_run(cmd, cwd=args.workspace or cwd).exit_code
+    except missing_binary:
+        print_error("Could not start '<harness>'.")
+        return 127
 ```
 
 `resolve_harness_binary(name)`:
