@@ -37,7 +37,9 @@ Hard rules. Never violate.
   single message.
 - Never push to any git remote. Pulling is allowed when needed; pushing is the
   user's explicit decision.
-- Never delete a workspace. Workspaces are archived (moved), never removed.
+- Never permanently delete user workspace artifacts. Workspace removal archives
+  non-repository artifacts and safely detaches or archives repository working
+  trees according to section 4.8.
 - All workflow scripts that act on user state must be non-interactive: if a
   required CLI argument is missing for a decision, the script must exit
   non-zero with a clear message naming the exact argument(s) to add and rerun.
@@ -115,8 +117,10 @@ opens the `Installation Agent` through it. Configure that here instead of
 deferring it.
 
 1. **Language.** Which natural language should I use for our conversation and
-   for all generated files? Default: English. If the user picks another
-   language, switch immediately, including the next question.
+  for all generated files? Default: English. File and directory names stay in
+  canonical English unless the user explicitly asks for localized names in
+  this answer; if they do, apply section 5.2. If the user picks another
+  language, switch immediately, including the next question.
 
 2. **Operating system family.** Windows, macOS, or Linux? Ask this question
   in order. If you can detect the current OS from the environment, present
@@ -464,7 +468,9 @@ Decision order on each invocation:
 
 2. Else if `Current` is non-empty:
    - Validate `Work/Current/` task filenames against section 4.3 before
-     any action; on mismatch exit non-zero with a clear message.
+     any action; on mismatch exit non-zero with a clear message. If more
+     than one task file exists in `Current/`, exit non-zero with a clear
+     precondition error because `Current/` is a singleton queue.
    - If `--current-action` is not provided: exit non-zero with a message
      naming the two valid values and stop.
    - If `to-done`: invoke `Work - Move` with
@@ -490,12 +496,17 @@ Decision order on each invocation:
      the mode, and the tail.
    - If the dispatcher exits non-zero: print a clear message that the task
      remains in `Current` and exit with that code.
-   - Otherwise invoke the dispatcher again with the verification worker and
-     the verify prompt (`Prompts/Work - Verify.md` inside the workspace) and the
-     same tail. The verifier dispatcher call must run with `--mode cli`
-     regardless of the mode requested by the caller, because the
-     verifier must finalize state by invoking `Work - Move` directly.
-     The verifier call may stream output live.
+   - Otherwise create a unique UTF-8 verification output file path under a
+     scratch directory inside the workspace (for example `.tmp/verify-<id>.txt`).
+     Invoke the dispatcher again with the verification worker and the verify
+     prompt (`Prompts/Work - Verify.md` inside the workspace). The verifier
+     tail is the current task body plus a short translated instruction naming
+     the absolute verification output file path and requiring the verifier to
+     write its full verification output there, then pass that same path to
+     `Work - Move --verification-output-file` when finalizing. The verifier
+     dispatcher call must run with `--mode cli` regardless of the mode
+     requested by the caller, because the verifier must finalize state by
+     invoking `Work - Move` directly. The verifier call may stream output live.
    - If the verifier dispatcher exits non-zero: invoke `Work - Move` with
      `--from current --to blocked --reason-kind DISPATCHER --reason "..."`
      where `--reason` is a concrete one-line translated sentence that
@@ -509,9 +520,9 @@ Decision order on each invocation:
        and exit 3;
      - any other state is a precondition error and exits non-zero.
    - On success: print one short success line.
-   - When `--dry-run` is set, skip verifier-output parsing (there is no real
-     verifier result to inspect) and do not enforce finalization checks; the
-     dispatcher's own dry-run output is the only effect.
+   - When `--dry-run` is set, skip verifier-output handling and do not enforce
+     finalization checks. The `Next -> Current` queue movement above still
+     happens; harness invocations themselves are dry-run prints only.
 
 5. Else (`Blocked`, `Current`, and `Next` all empty):
    - Print a single line indicating there is nothing to do and exit 0.
@@ -1459,11 +1470,12 @@ Guidance:
        same two translated bootstrap sentences as `Scripts/Workers/Default`
        (section 4.2). Any drift in those sentence literals is repaired
        before proceeding.
-     - Dispatcher smoke test: invoke `Scripts/Agent.<ext>` with
-       `--worker Default --prompt <abs Workspace Agent path> --mode cli
-       --dry-run` and confirm it prints a harness command without
-       error. Do **not** smoke-test against `Installation Agent.md`
-       once the launcher has been switched.
+     - Dispatcher smoke test before the launcher switch: invoke
+       `Scripts/Agent.<ext>` with
+       `--worker Default --prompt <abs Installation Agent path> --mode cli
+       --dry-run` and confirm it prints a harness command without error.
+       After the launcher has been switched in step 8, re-run the same smoke
+       test against `Workspace Agent.md`.
      - Top-level launcher (before the switch in step 8) still parses
        and targets the dispatcher with valid arguments per section 10.
        On Windows with Python launchers, confirm that `Open Agent.cmd`
@@ -1950,15 +1962,18 @@ Guidance:
   auto-attached; search by section title for any convention or decision
   needed to judge whether the change is acceptable.
 - Required behavior: validate that execution matches task intent; run
-  verification steps relevant to the change.
+  verification steps relevant to the change. When the verifier tail names a
+  verification output file path, write the full verification output to that
+  UTF-8 file before finalizing task movement.
 - Finalization requirement: the verifier must finalize task state through
   `Work - Move` and must not move files directly. Exactly one of the
   following calls is required:
   - success: `current -> done`;
   - failure: `current -> blocked` with `--reason-kind FAIL` and a clear
     one-line reason.
-  In both paths, the verifier passes `--verification-output-file` so the
-  full verification output is appended to the task file.
+  In both paths, the verifier passes `--verification-output-file` with the
+  exact path provided in the verifier tail so the full verification output is
+  appended to the task file.
 - Output expectation: verifier prose is free-form and human-readable.
   `Work - Do` does not parse protocol tokens from verifier output.
 
@@ -2696,58 +2711,63 @@ and report results.
     single trailing newline, and uses LF line endings with no trailing
     whitespace (section 8.22).
 
-10. `Work - Do` context-file selection excludes `Facts.md`. Create a
+10. `Work - Do` validates `Current/` as a singleton queue before restart or
+  `to-done` handling. Create a scratch workspace with two canonical task files
+  in `Work/Current/` and confirm `Work - Do` exits non-zero with a clear
+  precondition error before invoking any dispatcher.
+
+11. `Work - Do` context-file selection excludes `Facts.md`. Create a
     scratch workspace, write a non-empty `Facts.md` next to the usual
     artifacts, and confirm a `Work - Do --dry-run` invocation produces
     a dispatcher command whose `--context-files` value does **not**
     contain `Facts.md` even though the file exists (sections 4.5, 4.11,
   9.4). In the same check, confirm the emitted absolute paths are in
-  lexical order. Remove the scratch workspace in step 11.
+  lexical order. Remove the scratch workspace in step 12.
 
     Also verify the Workspace Agent prompt spec contains no automatic
     cross-workspace Facts merge, no workspace-wide Facts overwrite, and
     no global Facts reconciliation flow; preservation before archival is
     user-directed and explicit (section 8.3).
 
-11. Post-check cleanup: remove any synthetic files and scratch workspaces
-    created by verification steps 5, 8, and 10 so the tree returns to the
+12. Post-check cleanup: remove any synthetic files and scratch workspaces
+    created by verification steps 5, 8, 10, and 11 so the tree returns to the
     post-scaffold state expected by step 0.
 
-12. In-chat role switching coverage in prompt specs: verify that all five
+13. In-chat role switching coverage in prompt specs: verify that all five
   per-workspace prompts (`Integration Agent`, `Research Agent`, `Planner
   Agent`, `Worker Agent`, `Reviewer Agent`) explicitly implement section
   4.14 behavior for `switch to <role>` and `become <role>` in `--mode tui`.
 
-13. Role-target safety checks: verify the specs reject targets outside the
+14. Role-target safety checks: verify the specs reject targets outside the
   allowed five roles and explicitly reject `Installation Agent`,
   `Workspace Agent`, `Work - Execute`, and `Work - Verify` as in-chat
   switch targets.
 
-14. Same-role no-op check: verify prompt guidance defines a deterministic
+15. Same-role no-op check: verify prompt guidance defines a deterministic
   no-op response when the user requests a switch to the current role.
 
-15. Launcher-vs-in-chat distinction check: verify each per-workspace prompt
+16. Launcher-vs-in-chat distinction check: verify each per-workspace prompt
   distinguishes in-chat same-workspace switching (section 4.14) from
   launcher-based opening (section 8.3) when the user asks for a separate
   window or a different workspace.
 
-16. Role normalization check: verify prompt guidance uses one deterministic
+17. Role normalization check: verify prompt guidance uses one deterministic
   normalization table (section 4.14) so case and optional `agent` suffix
   resolve to the same canonical role keys.
 
-17. Mixed-intent precedence check: verify prompt guidance defines what to do
+18. Mixed-intent precedence check: verify prompt guidance defines what to do
   when one message contains both switching and task instructions (switch
   first, then continue under the new role), and what to do when multiple
   different switch targets appear in one message (ask one clarification,
   no switch yet).
 
-18. Capability-mismatch offer check: verify prompt guidance requires the
+19. Capability-mismatch offer check: verify prompt guidance requires the
   current role to offer an in-chat switch when the user asks for an action
   outside that role's responsibilities but inside another workspace role,
   with deterministic handling for one clear target vs multiple plausible
   targets (section 4.14).
 
-19. Protocol-literal immutability check: verify all generated artifacts keep
+20. Protocol-literal immutability check: verify all generated artifacts keep
   protocol-critical machine tokens exactly as specified (section 5.1), with
   no localization or spelling drift. At minimum confirm:
   - task frontmatter keys `rollback`, `blocked`, `kind`, and `reason`
@@ -2758,17 +2778,17 @@ and report results.
   - logger event identifiers from section 9.7 remain exact tokens
     (`work-do.start`, `workspace-archive.done`, etc.).
 
-20. Final manifest-exactness check: after step 11 cleanup (and after section
+21. Final manifest-exactness check: after step 12 cleanup (and after section
   13.5 rehearsal restore when rehearsal was enabled), assert that
   manifest-managed portions of the workflow root match the effective manifest
   exactly, with no extra scaffolder-created files or directories.
 
-21. Windows detach semantics check (Windows installs only): verify worker
+22. Windows detach semantics check (Windows installs only): verify worker
   wrapper logic for `--new-window` + `--mode tui` spawns a detached new
   console and returns 0 immediately without waiting; verify this branch is
   ignored for `cli` mode and on non-Windows OSes.
 
-22. No-implicit-push safety check: verify generated prompts and script
+23. No-implicit-push safety check: verify generated prompts and script
   guidance never perform `git push` automatically; push operations must
   require explicit user request.
 

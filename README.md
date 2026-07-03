@@ -21,9 +21,10 @@ Codex, Copilot Chat, …) and send one message:
 
 That agent acts as a **scaffolder**: it asks a few questions (natural
 language, OS, scripting language, AI harness) and produces the files.
-The directory it leaves behind is a self-contained, portable
-distributive pinned to your platform and harness — copy it to another
-machine and it works as-is.
+The directory it leaves behind is a self-contained distribution pinned
+to your platform and harness. If you move it to another path or machine,
+rerun the launcher-generation step so OS launchers point at the new
+location.
 
 The first time you open the top-level launcher it runs a one-off
 **Installation Agent** that wires up your actual repos and naming
@@ -256,9 +257,10 @@ A few things that make this different from "just prompting an agent":
   combination.
 - **Anything else.** When the Installation Agent runs from the top-level
   launcher it asks for add-ons, tweaks, or free-form comments before
-  finalizing the install — that is the moment to extend Nai with extra
-  roles, scripts, or conventions, or to strip out features you do not
-  want.
+  finalizing the install. Add-ons are applied by editing the existing
+  prompts, framework notes, worker wrappers, or conventions that own the
+  behavior; new top-level scripts and roles are outside the baseline
+  manifest unless you deliberately fork the workflow.
 
 ---
 
