@@ -723,7 +723,7 @@ Behavior:
    then log.
 3. Copy every non-git, non-launcher file and directory from
    `Workspaces/__template__` into the new workspace path. Skip launcher files
-   (they are regenerated in step 5).
+  (they are regenerated in step 7).
 4. Discover repositories: every immediate subdirectory of
    `Workspaces/__template__` that contains a `.git` entry (file or directory)
    is a repository.
@@ -732,13 +732,28 @@ Behavior:
      fails, abort the entire create with a clear message instructing the
      user to run installation setup so each template repo has at least one
      initial commit (an empty commit is acceptable).
+   - Require a clean template working tree before attach. If
+     `git status --porcelain` is non-empty in a template repo, abort the
+     entire create with a clear message naming the repo and instructing the
+     user to commit, stash, or discard changes in the template repo first.
    - Detect the currently checked-out branch in the template repo.
    - If the current branch has a configured upstream, run `git pull --ff-only`
      in the template repo. If it does not, skip the pull.
    - If a local branch with the requested workspace branch name already exists
     in that repo, attach a worktree at `<workspace-name>/<repo-name>` to it.
      Otherwise create a new branch from `HEAD` and create the worktree.
-6. Generate per-agent launchers inside the new workspace using the recipe in
+   - After each worktree attach, run `git submodule sync --recursive` and
+     `git submodule update --init --recursive` in the attached worktree.
+   - Submodule setup is strict: if recursive sync/update fails for any repo,
+     abort the entire create and roll back the partially created workspace.
+   - Validate submodule state before success: each declared submodule path in
+     `.gitmodules` must exist in the attached worktree after update. Any
+     mismatch is a create failure.
+6. Workspace creation is transactional. If any repository preflight,
+  worktree attach, submodule sync/update, validation, or launcher generation
+  step fails, the script must remove the partially created workspace directory
+  and exit non-zero with a clear error naming the failing step.
+7. Generate per-agent launchers inside the new workspace using the recipe in
    section 10 for the OS chosen at installation time. The script only emits
    launchers for that OS; on other OSes the step is a silent no-op so
    workspace creation still succeeds when the directory tree is shared
@@ -2240,31 +2255,54 @@ def main():
   target = workspaces_root / workspace
   if target.exists(): return 2
     repos = immediate_subdirs_with_git(template_root)
+  for repo in repos:
+    if git_status_porcelain(repo) != "":
+      print_error(f"Repo {repo.name} is dirty. Clean template repos before create.")
+      return 2
     for repo in repos:
         if not git_has_head(repo):  # git rev-parse --verify HEAD
             print_error(f"Repo {repo.name} has no HEAD commit. "
                         "Run `git commit --allow-empty -m init` in it and rerun.")
             return 2
   create_directory(target)
+  try:
     repos_names = {r.name for r in repos}
     for child in template_root.children:
-        if child.name in repos_names: continue
-        if is_launcher(child): continue
-        copy(child, target / child.name)
+      if child.name in repos_names: continue
+      if is_launcher(child): continue
+      copy(child, target / child.name)
     for repo in repos:
-        current = git_current_branch(repo)
-        if has_upstream(repo, current):
-            git_pull_ff_only(repo)
-        if branch_exists(repo, args.branch):
-            git_worktree_add(repo, target/repo.name, args.branch)
-        else:
-            git_worktree_add_new_branch(repo, target/repo.name, args.branch, "HEAD")
+      current = git_current_branch(repo)
+      if has_upstream(repo, current):
+        git_pull_ff_only(repo)
+      if branch_exists(repo, args.branch):
+        git_worktree_add(repo, target/repo.name, args.branch)
+      else:
+        git_worktree_add_new_branch(repo, target/repo.name, args.branch, "HEAD")
+      git_submodule_sync_recursive(target/repo.name)
+      git_submodule_update_init_recursive(target/repo.name)
+      assert_submodule_paths_exist(target/repo.name)
     create_per_agent_launchers(target)
     print_success(target)
     return 0
+  except Exception as ex:
+    best_effort_remove_tree(target)
+    print_error(f"Workspace create failed and was rolled back: {ex}")
+    return 2
 ```
 
-Exit codes: 0 success, 2 user/precondition error, propagate git failures.
+Exit codes: 0 success, 2 user/precondition error (including transactional
+rollback on create failure), otherwise non-zero on unexpected runtime failure.
+
+Helpers for submodule-safe create:
+- `git_submodule_sync_recursive(repo)` runs
+  `git -C <repo> submodule sync --recursive`.
+- `git_submodule_update_init_recursive(repo)` runs
+  `git -C <repo> submodule update --init --recursive`.
+- `assert_submodule_paths_exist(repo)` reads `.gitmodules` when present and
+  verifies every declared `path` exists after update; otherwise fail create.
+- `best_effort_remove_tree(path)` removes a partially created workspace on
+  failure without touching any path outside the workspace target.
 
 ### 9.3 `Workspace - Remove` (archive)
 
@@ -2902,6 +2940,13 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
   paths, and every such rejection uses the mandatory five-line
   filename-validation error format from section 4.3.
 6. `Workspace - Remove` refuses to run without `--synced`.
+6a. `Workspace - Create` resilience check (including submodules): in a scratch
+  template setup with at least one repo that has submodules, confirm create:
+  (1) refuses dirty template repos before any workspace mutation,
+  (2) runs recursive submodule sync/update after worktree attach,
+  (3) validates declared submodule paths exist,
+  (4) rolls back the partially created workspace directory on any simulated
+  failure during attach/submodule/launcher phases.
 7. `Work - Do` refuses to run when `Blocked` or `Current` is non-empty
    without the matching action flag.
    - Dry-run state check: with a task in `Work/Next/`, run `Work - Do
