@@ -32,6 +32,14 @@ conventions, asks about any add-ons or tweaks you want, and then
 creates `Installation Report.md`. From then on, the same static launcher
 detects that report file and opens the day-to-day **Workspace Agent**.
 
+## Installation Report Audit
+
+- Scaffolded baseline: `Installation Report.md` is absent.
+- Completion signal: the Installation Agent creates `Installation Report.md`
+  after checks pass and user confirmation.
+- Launcher behavior: the top-level launcher is static; report presence selects
+  `Workspace Agent`, report absence selects `Installation Agent`.
+
 After that, just open the top-level launcher again and ask the
 **Workspace Agent** to walk you through the workflow — it will show
 you how to create a workspace, where each role plugs in, and what
@@ -104,6 +112,7 @@ Prompts/
   Workspace Agent.md
 Scripts/
   Agent.<ext>                       dispatcher
+  Policy.<ext>                      shared runtime file policy utility
   Workspace - Create.<ext>
   Workspace - Remove.<ext>
   Work - Do.<ext>
@@ -173,7 +182,7 @@ You have several equally valid entry points, pick whichever fits:
   status bar buttons, a side panel, …) for the editor you use.
 - **From a pipeline.** Every entry point under `Scripts/` is
   non-interactive by design — including the agent dispatcher itself.
-  `Scripts/Agent --prompt <path/to/role-prompt.md> --workspace <ws> --mode cli`
+  `Scripts/Agent --worker Default --prompt <path/to/role-prompt.md> --workspace <ws> --mode cli --tail <text> --agent-name <name> --context-file <path> [repeat] --dry-run --new-window`
   runs any of the five roles unattended (the harness is invoked in its
   non-interactive mode: `opencode run`, `claude -p`, etc.) and returns
   an exit code. Missing a decision flag on any script exits non-zero
@@ -237,6 +246,9 @@ A few things that make this different from "just prompting an agent":
   the Integration Agent you are done, it syncs the workspace's backlog /
   changelog upstream and moves the whole workspace into `__archive__/`.
 - **No remote pushes unless you ask.** The scripts never push.
+- **Policy boundary is explicit.** Runtime policy enforces pre-mutation
+  checks for workflow script writes/moves/deletes, but it is not a sandbox
+  for arbitrary external harness filesystem writes.
 
 ---
 
