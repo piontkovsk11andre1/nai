@@ -903,6 +903,28 @@ In `--mode cli` (unattended) the rule does **not** apply: the agent
 should begin acting on the prompt and the `--tail` payload immediately,
 because there is no interactive user to greet.
 
+### 4.13a Per-workspace shared interaction contract
+
+Applies to the same five per-workspace prompts listed in section 4.13:
+`Integration`, `Research`, `Planner`, `Worker`, and `Reviewer`.
+
+Shared rules for `--mode tui`:
+
+- In-chat role switching follows section 4.14 exactly.
+- When the user asks to open a separate window or names a different
+  workspace, do not use in-chat switching. Use launcher-based opening
+  with the exact mapping and path rules from section 8.3.
+- If the user asks for an action outside the current role but clearly
+  within another of the five per-workspace roles, explain scope briefly
+  and offer an in-chat switch per section 4.14.
+- Cross-role handoff defaults to the current workspace unless the user
+  explicitly names a different workspace.
+
+Shared rules for `--mode cli`:
+
+- Role switching is disabled; execute the invocation prompt and `--tail`
+  payload as provided.
+
 ### 4.14 Per-workspace in-chat role switching
 
 Applies only to the same five per-workspace agent prompts listed in
@@ -1839,6 +1861,10 @@ itself does not need to spell that out.
 Headings: "Inputs", "Typical tasks", "Rules".
 
 Guidance:
+- Shared interaction contract: this prompt follows sections 4.13a and
+  4.14 for in-chat role switching, capability-mismatch switch offers,
+  and launcher-based opening when a separate window or different
+  workspace is requested.
 - Inputs: workspace `Issue`, `PR`, `Backlog`, `Changelog`, `Workspace`
   documents.
 - Typical tasks: bring task details into `Issue`; update issue comments and
@@ -1848,16 +1874,7 @@ Guidance:
   trackers/systems; keep a short external-tracker note in this prompt, either
   with the configured tracker details or with an explicit "not configured"
   statement. Explain git actions in plain language first, then run the
-  explicit command if the user wants it. If the user asks to switch roles in
-  the same workspace using section 4.14 command patterns, switch in-chat to
-  the requested role and continue in the same session. If the user asks to
-  perform work that is outside Integration scope, offer an in-chat switch to
-  the best-fit workspace role per section 4.14 before declining. If the user
-  asks to open another workspace agent window (or names a different
-  workspace),
-  resolve the exact launcher with the fixed mapping from section 8.3, explain
-  which launcher you are opening for which workspace, and open it by
-  explicit path.
+  explicit command if the user wants it.
 - Rules: one question at a time, no push without explicit user request;
   resolve cross-agent handoffs against the current workspace unless the user
   names a different workspace.
@@ -1869,15 +1886,9 @@ Headings: "Required behavior", "Optional tasks".
 Guidance: mirror section 4.10. Ask for pre-context first, then ask one
 question at a time, then write `Research`. Keep the conversation focused on
 what is being investigated, what is known so far, and what will be looked at
-next. Optionally update `Backlog`. If the user asks to switch roles in the
-same workspace using section 4.14 command patterns, switch in-chat to the
-requested role and continue in the same session. If the user asks to open
-another workspace agent window (or names a different workspace), resolve the
-exact launcher with the fixed mapping from section 8.3 against the current
-workspace unless the user names a different workspace, explain which launcher
-you are opening for which workspace, and open it by explicit path.
-If the user asks for actions outside Research scope, offer an in-chat switch
-to the best-fit workspace role per section 4.14 before declining.
+next. Optionally update `Backlog`. Shared interaction behavior for switching,
+capability mismatch, and launcher-based opening follows sections 4.13a and
+4.14.
 
 Treat `Research.md` as a **living document, edited in place**, not as an
 append-only log:
@@ -1968,16 +1979,9 @@ Guidance:
   Keep the plan understandable at a glance: what will be done, in what
   order, and how success will be checked. Defer out-of-scope items to
   `Backlog`. Read only the minimum required files first and do not run broad
-  cross-workspace discovery. If the user asks to switch roles in the same
-  workspace using section 4.14 command patterns, switch in-chat to the
-  requested role and continue in the same session. If the user asks to open
-  another workspace agent window (or names a different workspace), resolve
-  the exact launcher with the fixed mapping from section 8.3 against the
-  current workspace unless the user names a different workspace, explain
-  which launcher you are opening for which workspace, and open it by
-  explicit path. If the user asks for actions outside Planner scope, offer
-  an in-chat switch to the best-fit workspace role per section 4.14 before
-  declining.
+  cross-workspace discovery. Shared interaction behavior for switching,
+  capability mismatch, and launcher-based opening follows sections 4.13a
+  and 4.14.
 
 ### 8.18 Template `Prompts/Worker Agent.md`
 
@@ -1999,15 +2003,8 @@ Guidance:
   (section 8.17). If `Work/Next/` is empty when the user asks the
   Worker to start, instruct the user to run the Planner Agent first
   (or, if they explicitly ask, hand off to planning before executing).
-  If the user asks to switch roles in the same workspace using section
-  4.14 command patterns, switch in-chat to the requested role and continue
-  in the same session. If the user asks to open another workspace agent
-  window (or names a different workspace), resolve the exact launcher with
-  the fixed mapping from section 8.3 against the current workspace unless
-  the user names a different workspace, explain which launcher you are
-  opening for which workspace, and open it by explicit path. If the user
-  asks for actions outside Worker scope, offer an in-chat switch to the
-  best-fit workspace role per section 4.14 before declining.
+  Shared interaction behavior for switching, capability mismatch, and
+  launcher-based opening follows sections 4.13a and 4.14.
 - After each task is verified and moved to `Work/Done/`, create a local git
   commit for each changed repository before starting the next task. Commit
   only after successful verification; do not batch commits across tasks; the
@@ -2042,16 +2039,9 @@ Guidance:
   `Backlog`.
 - Rules: explain gaps in plain language; keep status updates concrete and
   measurable; tell the user what is ready, what is still missing, and what
-  follow-up is recommended. If the user asks to switch roles in the same
-  workspace using section 4.14 command patterns, switch in-chat to the
-  requested role and continue in the same session. If the user asks to open
-  another workspace agent window (or names a different workspace), resolve
-  the exact launcher with the fixed mapping from section 8.3 against the
-  current workspace unless the user names a different workspace, explain
-  which launcher you are opening for which workspace, and open it by
-  explicit path. If the user asks for actions outside Reviewer scope, offer
-  an in-chat switch to the best-fit workspace role per section 4.14 before
-  declining.
+  follow-up is recommended. Shared interaction behavior for switching,
+  capability mismatch, and launcher-based opening follows sections 4.13a
+  and 4.14.
 
 ### 8.20 Template `Prompts/Work - Execute.md`
 
@@ -2577,12 +2567,30 @@ distributions, launcher commands must invoke the dispatcher as
 the launcher is a `.cmd` file that resolves the interpreter as described
 in section 10.1 before invoking the dispatcher.
 
+### 10.0 Launcher validation contract
+
+All top-level OS launcher recipes must enforce the same active-prompt
+validation rules before invoking the dispatcher:
+
+- Read `Current Prompt.txt` as UTF-8 text and trim trailing line breaks.
+- Reject empty prompt paths.
+- Resolve the prompt path to an absolute path.
+- Reject when the resolved path does not exist.
+- Reject when the resolved path is outside the workflow-root `Prompts/`
+  directory.
+
+Per-workspace launchers do not read `Current Prompt.txt`; they pass their
+fixed per-agent prompt path and `--workspace .` directly.
+
 ### 10.1 Windows: `.cmd` launchers
 
 Create plain-text `.cmd` launchers. For Python-based distributions, each
 launcher must resolve Python in this exact order before invoking the
 dispatcher: `py` on `PATH`, then `python` on `PATH`, then
 `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`.
+
+Top-level and per-workspace launchers follow section 10.0 for active-prompt
+validation and path-containment rules.
 
 ```
 @echo off
@@ -2645,6 +2653,9 @@ Notes:
 Each launcher is an executable shell script with a `.command` extension so
 the user can double-click it from Finder.
 
+Top-level and per-workspace launchers follow section 10.0 for active-prompt
+validation and path-containment rules.
+
 Top-level launcher:
 
 ```
@@ -2698,6 +2709,9 @@ Exec=sh -c 'prompt_path="$(tr -d "\r\n" < "$1/Current Prompt.txt")"; if [ -z "$p
 Path=<workflow root>
 Terminal=true
 ```
+
+Top-level and per-workspace launchers follow section 10.0 for active-prompt
+validation and path-containment rules.
 
 Per-workspace launcher:
 
