@@ -3137,7 +3137,7 @@ validation and path-containment rules.
 
 ```
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 
 set "PYTHON_CMD="
 where py >nul 2>nul && set "PYTHON_CMD=py"
@@ -3160,7 +3160,16 @@ if not exist "%PROMPT_PATH%" (
   >&2 echo Selected prompt not found: %PROMPT_PATH%
   exit /b 2
 )
-echo(%PROMPT_PATH%| findstr /i /b /c:"%PROMPTS_ROOT%" >nul || (
+set "_ROOT=%PROMPTS_ROOT%"
+set "_TMP=!_ROOT!"
+set /a _ROOT_LEN=0
+:__count_root_len
+if defined _TMP (
+  set "_TMP=!_TMP:~1!"
+  set /a _ROOT_LEN+=1
+  goto :__count_root_len
+)
+if /i not "!PROMPT_PATH:~0,%_ROOT_LEN%!"=="!_ROOT!" (
   >&2 echo Selected prompt must be under Prompts/: %PROMPT_PATH%
   exit /b 2
 )
@@ -3181,7 +3190,10 @@ Notes:
 - Top-level `Open Agent.cmd` checks `Installation Report.md` presence and
   selects prompt accordingly. The launcher file is static; installation state
   changes by creating/removing the report, not by rewriting launcher.
-- In the sample containment check, `%PROMPTS_ROOT%` includes a trailing
+- Avoid `findstr` for Windows path containment checks. In practice it can
+  produce false negatives for valid absolute paths; use deterministic
+  case-insensitive prefix comparison in cmd (as shown above) instead.
+- In the sample containment check, `%PROMPTS_ROOT%` keeps a trailing
   backslash so the prefix test remains folder-exact (`Prompts\\...`, not
   similarly prefixed siblings).
 - The example above is the top-level launcher shape. Per-workspace Windows
@@ -3455,6 +3467,10 @@ Verification execution order (compact anti-drift guard):
   report state from `Installation Report.md`, selects the correct
   top-level prompt, and rejects selected prompt paths outside the workflow
   root `Prompts/` directory.
+  Validate the Windows containment gate with a workflow-root path that
+  includes spaces and backslashes, and ensure valid prompt paths pass while
+  outside paths fail. This check must use deterministic cmd prefix
+  comparison (as defined in section 10.1), not `findstr` pattern matching.
   Verify it does not hardcode either `Installation Agent.md` or
   `Workspace Agent.md` as its permanent prompt target. Verify
   scaffolded state has no `Installation Report.md` and `README.md` contains the
