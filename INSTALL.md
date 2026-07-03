@@ -601,8 +601,15 @@ Behavior:
    4. Worker Agent
    5. Reviewer Agent
 
+  The numbering-to-role mapping above is canonical. If localized file names
+  are enabled (section 5.2), emit the effective launcher basenames from the
+  mapping table while preserving the same role pairing (`1` = Integration,
+  `2` = Research, `3` = Planner, `4` = Worker, `5` = Reviewer).
+
   Each launcher invokes the dispatcher with `--worker Default`,
-  `--prompt Prompts/<Agent>.md` (relative to the workspace), `--workspace .`,
+  `--prompt Prompts/<Agent>.md` (relative to the workspace; `<Agent>` means
+  the effective mapped prompt basename for that role when section-5.2
+  localization is enabled), `--workspace .`,
   `--mode tui`, and `--agent-name "<Agent>"`. On Windows, also pass
   `--new-window` so the worker wrapper can detach into a new console per
   section 4.2.
@@ -875,6 +882,13 @@ localized names, you may translate them, but you must:
 - Record the mapping table in `README.md` under a short dedicated section;
   do not modify `INSTALL.md`.
 
+For all create/verify/cleanup checks in this specification, use the
+**effective manifest**:
+- start from the canonical list in section 7,
+- apply the section-5.2 name mapping table when localized names were
+  chosen,
+- if no mapping is provided, the effective manifest is the canonical list.
+
 Canonical names (English defaults):
 
 ```
@@ -1056,7 +1070,8 @@ Lifecycle:
 
 ## 7. File manifest
 
-Create exactly these files. Do not create more, do not skip any.
+Create exactly the files in the effective manifest (section 5.2 + this
+canonical list). Do not create more, do not skip any.
 
 ### Root
 
@@ -1299,7 +1314,8 @@ Guidance:
        by editing the **existing** files that are responsible for that
        behavior; do **not** invent new top-level files or new scripts
        under `Scripts/` for an integration (the file manifest in
-       section 7 is the upper bound on what may exist at workflow
+      section 7, interpreted through the effective manifest rule in
+      section 5.2, is the upper bound on what may exist at workflow
        root). Acceptable edit targets are:
        - any per-workspace prompt under
          `Workspaces/__template__/Prompts/` (e.g. add a "VS Code"
@@ -1414,7 +1430,8 @@ Guidance:
   top-level launcher switched to `Workspace Agent`; any
   integration-related edits from step 6 applied to the existing files
   named in that step (no new files or scripts outside the section 7
-  manifest). The scaffolder-provided `Workspaces/__template__/Facts.md`
+  manifest, interpreted through section 5.2). The scaffolder-provided
+  `Workspaces/__template__/Facts.md`
   stub (section 8.22) is left in place untouched by this agent.
 
 ### 8.3 `Prompts/Workspace Agent.md`
@@ -1427,14 +1444,17 @@ Guidance:
   - archive a workspace via `Workspace - Remove --synced`,
   - **merge facts** on user request (see below),
   - open per-workspace agents by resolving the user's agent name to the
-    exact per-workspace launcher file via this fixed mapping (no fuzzy
-    lookup). Explain which launcher you are opening and for which
+    exact per-workspace launcher file via this fixed canonical role mapping
+    (no fuzzy lookup). Explain which launcher you are opening and for which
     workspace:
     - Integration -> `1. Open Integration Agent` launcher
     - Research -> `2. Open Research Agent` launcher
     - Planner -> `3. Open Planner Agent` launcher
     - Worker -> `4. Open Worker Agent` launcher
     - Reviewer -> `5. Open Reviewer Agent` launcher
+    If localized file names are enabled (section 5.2), treat these five
+    basenames as canonical identifiers and resolve to their effective mapped
+    basenames from the mapping table, preserving the same role pairing.
   - The exact launcher filename is the mapped basename plus the OS-specific
     launcher extension for the installation OS: `.cmd` on Windows,
     `.command` on macOS, `.desktop` on Linux.
@@ -2308,9 +2328,10 @@ Notes:
   `Prompts/Workspace Agent.md` (same launcher file, only the prompt path
   changes).
 - Per-workspace launchers use a relative prompt path (`Prompts/<Agent>.md`)
-  and `--workspace "."`. The launcher itself must change to its own
-  directory first (`cd /d "%~dp0"`) so relative paths resolve from the
-  workspace path.
+  and `--workspace "."`; `<Agent>` resolves to the effective mapped prompt
+  basename for that role when section-5.2 localization is enabled. The
+  launcher itself must change to its own directory first (`cd /d "%~dp0"`)
+  so relative paths resolve from the workspace path.
 
 ### 10.2 macOS: `.command` scripts
 
@@ -2475,7 +2496,8 @@ and report results.
 
 0. **Cleanup pass.** Before running the remaining checks, walk the entire
    workflow root and delete every file or directory that is not part of
-    the file manifest in section 7 and was created by scaffolding,
+  the effective manifest (section 5.2 + section 7) and was created by
+  scaffolding,
     verification, or rehearsal. Preserve any pre-existing user workspaces
     under `Workspaces/` other than throwaway rehearsal paths created by this
     run. This explicitly includes:
@@ -2488,7 +2510,7 @@ and report results.
      (summaries, change notes, READMEs inside subdirectories);
    - any partially generated files left over from aborted attempts.
     The only exceptions are: this `INSTALL.md` (consumed input), and the
-    files explicitly listed in section 7. The four template
+    files in the effective manifest. The four template
     `Work/*/` queue directories and the empty `Workspaces/__archive__/` directory
     are part of the manifest and must remain. The `Workspaces/__template__/`
    directory itself ships with no repository directories; any
@@ -2496,11 +2518,12 @@ and report results.
    repo directories the rehearsal (section 13.5) or a previous aborted
    run may have left behind must be removed in this pass. After this
    pass, the manifest-managed portions of the workflow root tree must
-   match section 7 exactly, with no extra scaffolder-created artifacts.
+  match the effective manifest exactly, with no extra
+  scaffolder-created artifacts.
 
-1. Every file from section 7 exists. Every manifest file that is specified
-    to carry content must be non-empty; the four template queue directories
-  must exist.
+1. Every file from the effective manifest exists. Every manifest file that
+  is specified to carry content must be non-empty; the four template queue
+  directories must exist.
 2. All generated scripts are syntactically valid (compile, parse, or
    lint depending on the language).
 3. Dispatcher dry-run with the Installation Agent prompt prints a valid
@@ -2645,15 +2668,20 @@ Protocol:
    - because `--dry-run` was set, the task stayed in `Work/Current/` per
      section 4.5 step 4.
 
-   Additional non-dry-run assertions:
-   - Run one non-dry-run verification success path and assert it moves the
-     task to `Work/Done/` and appends a `Verification Output` section.
-   - Invoke `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count 1`
-     so the task returns to `Work/Next/`.
-   - Run one non-dry-run verification failure path and assert it moves the
-     task to `Work/Blocked/`, appends a `Verification Output` section,
-     and adds a blocked-reason header.
-   - Invoke `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from blocked --to done`
+   Additional simulated finalization assertions (still no real harness calls):
+   - Simulate verifier success by invoking
+     `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to done --verification-output-file <tmp-success-output.txt>`
+     and assert the task moves to `Work/Done/` with an appended
+     `Verification Output` section.
+   - Move the task back to `Work/Current/` via
+     `Work - Move --from done --to next` then
+     `Work - Move --from next --to current`.
+   - Simulate verifier failure by invoking
+     `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to blocked --reason-kind FAIL --reason "Rehearsal simulated verifier failure" --verification-output-file <tmp-failure-output.txt>`
+     and assert the task moves to `Work/Blocked/`, appends a
+     `Verification Output` section, and adds a blocked-reason header.
+   - Invoke
+     `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from blocked --to done`
      so the task is in `Work/Done/` for the explicit undo exercise below.
 
 6. **Exercise `--current-action to-done`.** Move the task back to
