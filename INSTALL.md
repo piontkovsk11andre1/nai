@@ -645,13 +645,14 @@ Behavior:
 6. Move every non-repository child of the workspace into the destination,
    preserving structure.
 7. For each repo, perform these sub-steps **in order**:
-   1. **Snapshot (conditional).** If the repo is dirty and
-      `--include-uncommitted` was given, copy the working tree (excluding
-      `.git`) into the destination under the repo name. This must happen
-      *before* any worktree removal so the dirty files are preserved on
-      disk. If the repo is clean, or `--include-uncommitted` was not
-      given (in which case the script would have already exited at step 4
-      for dirty repos), skip this sub-step.
+  1. **Snapshot (conditional, worktree repos only).** If the repo is a
+    worktree pointer (its `.git` is a file that resolves under a primary
+    repo), and it is dirty, and `--include-uncommitted` was given, copy
+    the working tree (excluding `.git`) into the destination under the
+    repo name. This must happen *before* worktree removal so dirty files
+    are preserved on disk. For plain repos (no primary detected), skip
+    this snapshot step because the full repo directory is archived by move
+    in sub-step 2.
    2. **Remove the repo from the workspace.** After the optional snapshot,
       always detach/delete the repo directory from the workspace:
       - If the repo's `.git` is a worktree pointer (file whose `gitdir:`
@@ -659,11 +660,13 @@ Behavior:
         `git worktree remove <repo-dir>` from the primary repo (with
         `--force` when `--include-uncommitted` is set, since the worktree
         is dirty).
-      - Otherwise (a plain repo directory, no primary detected) remove the
-        directory from the filesystem.
+      - Otherwise (a plain repo directory, no primary detected), move the
+        entire repo directory (including `.git`) into the archive destination
+        under the same repo name.
 
-   The snapshot and the removal are sequential, not alternative: a dirty
-   repo with `--include-uncommitted` is both snapshotted and then removed.
+  For worktree repos, the snapshot and the removal are sequential, not
+  alternative: a dirty repo with `--include-uncommitted` is both
+  snapshotted and then removed.
 8. Run `git worktree prune` once per unique primary repo to clean up stale
    worktree records. Prune failures are warnings, not fatal.
 9. Attempt to remove the now-empty workspace directory (best effort).
@@ -2064,13 +2067,13 @@ def main():
         if child in repos: continue
         move(child, dest / child.name)
     for repo in repos:
-        if args.include_uncommitted and repo in dirty:
-            copytree(repo, dest/repo.name, ignore=[".git"])
-        primary = primaries[repo]
-        if primary is not None:
-            git_worktree_remove(primary, repo, force=args.include_uncommitted)
-        else:
-            rmtree(repo)
+      primary = primaries[repo]
+      if primary is not None and args.include_uncommitted and repo in dirty:
+        copytree(repo, dest/repo.name, ignore=[".git"])
+      if primary is not None:
+        git_worktree_remove(primary, repo, force=args.include_uncommitted)
+      else:
+        move(repo, dest/repo.name)
     for primary in unique(p for p in primaries.values() if p):
         git_worktree_prune(primary)   # warning only on failure
     try_rmdir(source)                 # best effort
@@ -2373,8 +2376,9 @@ Path=<working directory>
 Terminal=true
 ```
 
-Mark the file executable. For users who run from a terminal, you may
-additionally provide a plain shell wrapper similar to the macOS recipe.
+Mark the file executable. Do not create any additional launcher or wrapper
+files on Linux unless they are explicitly listed in the effective manifest
+(section 5.2 + section 7).
 
 ### 10.4 Switching the top-level launcher after installation
 
@@ -2518,8 +2522,9 @@ and report results.
    - any extra documentation files you produced beyond the manifest
      (summaries, change notes, READMEs inside subdirectories);
    - any partially generated files left over from aborted attempts.
-    The only exceptions are: this `INSTALL.md` (consumed input), and the
-    files in the effective manifest. The four template
+    The only exceptions are: this `INSTALL.md` (consumed input), the files
+    in the effective manifest, and any pre-existing user workspaces under
+    `Workspaces/` that were not created by this run. The four template
     `Work/*/` queue directories and the empty `Workspaces/__archive__/` directory
     are part of the manifest and must remain. The `Workspaces/__template__/`
    directory itself ships with no repository directories; any
