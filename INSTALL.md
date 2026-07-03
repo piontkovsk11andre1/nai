@@ -40,6 +40,10 @@ Hard rules. Never violate.
 - All workflow scripts that act on user state must be non-interactive: if a
   required CLI argument is missing for a decision, the script must exit
   non-zero with a clear message naming the exact argument(s) to add and rerun.
+- Missing-argument diagnostics are standardized across scripts: report the
+  exact canonical flag token(s) that are missing (for example `--synced`,
+  `--blocked-action`), include allowed values when the argument is an enum,
+  and return exit code `2` for user/precondition errors.
 - Never invent file or directory names beyond what this spec defines. If the
   user requests localized names, you may translate them, but you must record
   the mapping in the file-name mapping table described in section 5.2 and apply it
