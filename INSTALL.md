@@ -779,6 +779,25 @@ Behavior:
   state that existed before the first undone task. Stop on first repo
    failure with a non-zero exit; do not try to recover, but report which
    repo and what failed.
+
+Per-repository target selection (deterministic, sparse/interleaved safe):
+
+- Build the undo set first (last `N` done tasks by workload ID as above).
+- For each affected repository `R`, consider only tasks in the undo set that
+  contain a rollback entry for `R`.
+- Target hash for `R` is the hash from the task with the smallest workload ID
+  among that filtered subset.
+- If a task in the undo set has no rollback entry for `R`, it is ignored for
+  `R` target selection (no synthetic fallback, no borrowing from other repos).
+
+Examples:
+
+- Undo set has tasks `w-0010`, `w-0011`, `w-0012`.
+  - `RepoA` appears in `w-0010` and `w-0012` -> target is `RepoA` hash from
+    `w-0010`.
+  - `RepoB` appears only in `w-0011` -> target is `RepoB` hash from `w-0011`.
+  - `RepoC` appears only in `w-0012` -> target is `RepoC` hash from `w-0012`.
+- If no task in the undo set references `RepoD`, `RepoD` is unaffected.
 6. For each undone task, strip rollback and blocked-reason frontmatter fields and move
   the file to `Work/Next/` in original order.
 
@@ -1062,6 +1081,15 @@ Required behavior when one of these agents is running in `--mode tui`:
   - `reviewer`, `reviewer agent` -> `Reviewer`
   Prompts may recognize chosen-language equivalents, but they must map
   to these same canonical role keys before switching.
+  Localized alias tables (when used) must pass strict validation:
+  - every alias maps to exactly one canonical role key;
+  - no alias collisions across different canonical role keys;
+  - no empty aliases after normalization;
+  - normalization is deterministic and shared across all five per-workspace
+    prompts.
+  On validation failure, treat role-switch configuration as invalid and fail
+  with a clear user/precondition error naming the colliding alias and the
+  conflicting targets.
 - On a valid request, the handoff is **in-chat** and **same-session**:
   the agent adopts the target role's prompt behavior and continues in the
   same chat, in the same workspace, with prior conversation context
@@ -2699,6 +2727,9 @@ Behavior follows section 4.6 step by step. Provide:
 - `snapshot_working_tree(repo, destination)` that copies affected working
   trees before destructive commands and excludes `.git` directories.
 - Sort `Done/` task files by workload identifier rule from section 4.6.
+- Compute rollback target per repository deterministically from the undo set:
+  for each repository, choose the hash from the smallest workload ID among
+  undone tasks that include that repository in rollback metadata.
 - Strip rollback/blocked frontmatter fields before moving undone task files back to
   `Next/`.
 - Task-file rewrites and moves performed by undo must be policy-guarded via
@@ -3389,6 +3420,10 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
   with `--force --snapshot-before-undo <scratch-snapshot-path>` and confirm
   the snapshot is created before `git reset --hard` and `git clean -fdx`, the
   task returns to `Work/Next/`, and rollback/blocked metadata is stripped.
+  Also verify sparse/interleaved per-repo rollback selection: with an undo set
+  where different repos appear in different subsets of undone tasks, confirm
+  each repo resets to the hash from the smallest workload ID among undone tasks
+  that reference that repo.
 
 13. In-chat role switching coverage in prompt specs: verify that all five
   per-workspace prompts (`Integration Agent`, `Research Agent`, `Planner
@@ -3411,6 +3446,10 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
 17. Role normalization check: verify prompt guidance uses one deterministic
   normalization table (section 4.14) so case and optional `agent` suffix
   resolve to the same canonical role keys.
+  Also verify any localized alias table is collision-free and deterministic:
+  each alias maps to exactly one canonical role key, no alias maps to
+  multiple targets, and the same alias normalization rules are shared across
+  all five per-workspace prompts.
 
 18. Mixed-intent precedence check: verify prompt guidance defines what to do
   when one message contains both switching and task instructions (switch
