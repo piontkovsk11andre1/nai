@@ -140,6 +140,14 @@ deferring it.
 4. **Workflow root path.** Absolute path where the workflow should be
    installed. Default: the current working directory.
 
+  Root binding rule: once this path is chosen, treat it as authoritative for
+  the entire run. Every generated absolute path, launcher `Path=` value,
+  command example that uses an absolute path, and script output that names a
+  concrete location must resolve under this exact workflow root. Never reuse a
+  remembered path from another repository/session (for example a previous
+  `C:\Work\infra\...` root) and never emit `Workspaces/...` rooted anywhere
+  else.
+
   After this answer and before writing files, run the collision preflight from
   section 1 against writable effective-manifest paths rooted at this path.
 
@@ -1161,6 +1169,11 @@ Required behavior when one of these agents is running in `--mode tui`:
   harness exposes a real system-prompt replacement primitive; prompts must not
   imply that a script-enforced role boundary exists when the harness does not
   provide one.
+- Prompt rebind is mandatory on switch: before handling any post-switch task
+  text, the agent must load and apply the target role prompt instructions from
+  `Prompts/<Target Role>.md` for the current workspace. Acknowledge-only
+  responses such as `ok`, `okay`, or equivalent without actually adopting the
+  target prompt behavior are invalid.
 - The agent acknowledges the switch in one short line before continuing
   under the target role behavior.
 - Mixed-intent precedence is deterministic:
@@ -2337,6 +2350,11 @@ Guidance:
   follow-up is recommended. Shared interaction behavior for switching,
   capability mismatch, and launcher-based opening follows sections 4.13a
   and 4.14.
+- Session-start behavior: after reading the Reviewer prompt, wait for explicit
+  user instruction before performing any review action. Do not start reviewing
+  automatically. You may offer one default suggested next action (for example,
+  review latest completed task), but execute only after explicit user
+  confirmation/command.
 
 ### 8.20 Template `Prompts/Work - Execute.md`
 
@@ -3243,6 +3261,9 @@ Notes:
 - Top-level `Open Agent.cmd` checks `Installation.md` presence and
   selects prompt accordingly. The launcher file is static; installation state
   changes by creating/removing the report, not by rewriting launcher.
+- All absolute path material in generated launchers must be rooted at the
+  interview-selected workflow root from section 3 question 4. Reject and fix
+  any stale absolute root from prior runs/sessions.
 - Avoid `findstr` for Windows path containment checks. In practice it can
   produce false negatives for valid absolute paths; use deterministic
   case-insensitive prefix comparison in cmd (as shown above) instead.
