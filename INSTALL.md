@@ -186,8 +186,10 @@ deferring it.
    restore the workflow root to its post-scaffold state? Default: no. This
    practice pass checks that the scripts and launchers are connected
    correctly using a throwaway workspace and throwaway repos. It does
-  **not** call the AI tool for real -- workflow state transitions use
-  `--rehearse`, and every harness invocation uses `--mode cli --dry-run`, so
+  **not** call the AI tool for real -- `Work - Do` invocations use
+  `--rehearse`, queue transitions are exercised through explicit
+  `Work - Move` calls, and every harness invocation uses
+  `--mode cli --dry-run`, so
   no tokens are spent and no model round-trips happen. If yes, follow the
   protocol in section 13.5 at the end of the verification checklist.
 
@@ -501,72 +503,43 @@ Invoked non-interactively with these arguments:
   a workspace, i.e. contains the workspace document and `Work/`)
 - `--execution-worker <display-name>` (optional, default `Default`)
 - `--verification-worker <display-name>` (optional, default `Default`)
-- `--blocked-action to-current|to-done` (optional)
-- `--current-action restart|to-done` (optional)
+- `--current-action restart|validate-only` (optional, default `restart`)
 - `--mode cli|tui` (optional, default `cli`)
 - `--dry-run` (optional flag; read-only preview, no queue or repository
   mutation)
-- `--rehearse` (optional flag; perform workflow state transitions while
-  passing `--dry-run` to harness invocations so no model call is made)
+- `--rehearse` (optional flag; run the same execution flow while passing
+  `--dry-run` to harness invocations so no model call is made)
 - `--verifier-timeout <seconds>` (optional positive integer; when provided,
   verifier dispatch must finish within this many seconds)
 
 Decision order on each invocation:
 
-1. If `Blocked` is non-empty:
-   - Validate `Work/Blocked/` task filenames against section 4.3 before
-  selection; on mismatch exit non-zero using the mandatory five-line
-  filename-validation error format from section 4.3.
-   - If `--blocked-action` is not provided: exit non-zero with a message
-     naming the two valid values and stop.
-   - Let `<task>` be the first file in `Work/Blocked/` by lexical name.
-   - If `to-current`: invoke `Work - Move` with
-     `--from blocked --to current --task <task>`.
-   - If `to-done`: invoke `Work - Move` with
-     `--from blocked --to done --task <task>`.
-   - Return after handling one blocked item.
-
-2. Else if `Current` is non-empty:
-   - Validate `Work/Current/` task filenames against section 4.3 before
+1. Validate `Work/Current/` task filenames against section 4.3 before
   any action; on mismatch exit non-zero using the mandatory five-line
-  filename-validation error format from section 4.3. If more
-     than one task file exists in `Current/`, exit non-zero with a clear
-     precondition error because `Current/` is a singleton queue.
-   - If `--current-action` is not provided: exit non-zero with a message
-     naming the two valid values and stop.
-   - If `to-done`: invoke `Work - Move` with
-     `--from current --to done` and stop.
-  - If `restart`: fall through to the execution step below using the existing
-    current task file (do not recapture rollback metadata).
+  filename-validation error format from section 4.3.
+  If more than one task file exists in `Current/`, exit non-zero with a clear
+  precondition error because `Current/` is a singleton queue.
 
-3. Else if `Current` is empty and `Next` is non-empty:
-  - Validate `Work/Next/` task filenames against section 4.3 before
-    selection; on mismatch exit non-zero using the mandatory five-line
-    filename-validation error format from section 4.3.
-   - Let `<task>` be the first file in `Work/Next/` by lexical name.
-   - If `--dry-run` is set and `--rehearse` is not set, print the planned
-     `Next -> Current` transition and continue through the planned execution
-     and verification steps without invoking `Work - Move` or changing any
-     file. `--dry-run` is a read-only preview.
-   - Otherwise (normal mode or `--rehearse`), invoke `Work - Move` with
-     `--from next --to current --task <task>`.
-   - Continue to execution. When `--rehearse` is set, this pop-and-write
-     step intentionally runs on disk, but every harness invocation below is
-     made with `--dry-run` so no tokens are spent and no model round-trip
-     happens.
+2. If `Current` is empty:
+   - If `Next` is non-empty, validate `Work/Next/` task filenames against
+     section 4.3 and exit non-zero with a clear message instructing the
+     caller to run `Work - Move --from next --to current` first.
+   - If `Next` is empty, print a single line indicating there is no current
+     task to execute and exit 0.
 
-4. Execution and verification:
+3. Execution and verification on the existing current task:
   - Build a tail string equal to the current task body (metadata
     frontmatter stripped).
-   - Invoke the dispatcher with the execution worker, the execute prompt
-     (`Prompts/Work - Execute.md` inside the workspace), the workspace path,
-     the mode, and the tail.
+   - If `--current-action restart` (default), invoke the dispatcher with the
+     execution worker, the execute prompt (`Prompts/Work - Execute.md` inside
+     the workspace), the workspace path, the mode, and the tail.
    - The execution call must stream output live to CLI and also append the
      same output lines to `<workspace>/log.txt` via `Logger` under
      `work-do.execute`.
-   - If the dispatcher exits non-zero: print a clear message that the task
-     remains in `Current` and exit with that code.
-   - Otherwise create a unique UTF-8 verification output file path under a
+   - If `--current-action restart` and the dispatcher exits non-zero: print a
+     clear message that the task remains in `Current` and exit with that code.
+   - If `--current-action validate-only`, skip the execution dispatcher.
+   - Create a unique UTF-8 verification output file path under a
      scratch directory inside the workspace (for example `.tmp/verify-<id>.txt`).
      Invoke the dispatcher again with the verification worker and the verify
      prompt (`Prompts/Work - Verify.md` inside the workspace). The verifier
@@ -583,41 +556,27 @@ Decision order on each invocation:
     task finalization is determined only by queue state and `Work - Move`.
      If `--verifier-timeout` is provided and the verifier dispatcher does not
      finish before the timeout, terminate the verifier process, preserve any
-     verification output file bytes that exist, invoke `Work - Move` with
-     `--from current --to blocked --reason-kind INVALID --reason "..."`, and
-     use a concrete translated one-line reason that names the timeout seconds.
-   - If the verifier dispatcher exits non-zero: invoke `Work - Move` with
-     `--from current --to blocked --reason-kind DISPATCHER --reason "..."`
-     where `--reason` is a concrete one-line translated sentence that
-     includes the verifier dispatcher exit code `<N>`, then exit with the
-     verifier dispatcher's code. If the verification output file exists, pass
-     it to this fallback `Work - Move` with `--verification-output-file` so the
-     partial verifier output is preserved in the blocked task. This fallback
-     move must be checked: if
-     `Work - Move` itself exits non-zero, print a clear second error that
-     blocking failed and exit non-zero with the move failure code.
+     verification output file bytes that exist, print a clear timeout error,
+     and exit 3. `Work - Do` does not perform queue transitions.
+   - If the verifier dispatcher exits non-zero: print a clear error that the
+     verifier failed and the task remains in `Current`, then exit with the
+     verifier dispatcher's code. `Work - Do` does not perform queue
+     transitions.
    - Otherwise, when neither `--dry-run` nor `--rehearse` is set, validate
      post-verify state:
      - if the same task file now exists in `Work/Done/`: success;
      - if it now exists in `Work/Blocked/`: failure, exit code 3;
-     - if it still exists in `Work/Current/`: treat as `INVALID`, invoke
-       `Work - Move` with `--from current --to blocked --reason-kind INVALID`
-       and pass `--verification-output-file` if the verifier output file exists,
-       and exit 3 when the move succeeds; if the fallback move fails, print a
-       clear second error that blocking failed and exit non-zero with the
-       move failure code;
+     - if it still exists in `Work/Current/`: treat as invalid verifier
+       finalization, print a clear error that verifier must finalize through
+       `Work - Move`, and exit 3;
      - any other state is a precondition error and exits non-zero.
    - On success: print one short success line.
    - When `--dry-run` is set and `--rehearse` is not set, skip all mutation,
      verifier-output handling, and finalization checks. Print the dispatcher
      commands that would be invoked.
-   - When `--rehearse` is set, perform queue transitions and repository
-     operations owned by workflow scripts, but pass `--dry-run` to dispatcher
-     calls and skip verifier-output handling and finalization checks. This is
-     the only dry-harness mode allowed to mutate queue state.
-
-5. Else (`Blocked`, `Current`, and `Next` all empty):
-   - Print a single line indicating there is nothing to do and exit 0.
+   - When `--rehearse` is set, run the same flow but pass `--dry-run` to
+     dispatcher calls and skip post-verify finalization checks. `Work - Do`
+     does not mutate queue state in rehearse mode.
 
 Additional context passed to the dispatcher: build the `--context-files`
 value from existing artifacts in the workspace such as
@@ -1089,7 +1048,7 @@ Protocol literals that are **not translated** under any circumstances
   fixed ASCII; only the embedded free-text reason value is in the chosen
   language.
 - Dispatcher / worker / `Work - *` CLI flag names (`--prompt`, `--mode`,
-  `--workspace`, `--from`, `--to`, `--blocked-action to-current|to-done`,
+  `--workspace`, `--from`, `--to`, `--current-action restart|validate-only`,
   etc.). Their
   *help text* is translated; the flag names and enum values stay
   ASCII.
@@ -2289,8 +2248,8 @@ Minimum policy profile matrix (required baseline):
     the targeted workspace path;
   - must not mutate unrelated sibling workspaces.
 - `work-do-script`:
-  - may write workspace scratch outputs and invoke queue transitions only via
-    `Work - Move`;
+  - may write workspace scratch outputs;
+  - must not perform queue transitions;
   - must not directly mutate queue state files as a substitute for
     `Work - Move`.
 - `work-move-script`:
@@ -2508,15 +2467,19 @@ propagate git failures from worktree removal.
 
 Inputs: as in section 4.5.
 
-Behavior follows section 4.5 step by step and uses `Work - Move` for all
-queue transitions instead of directly editing queue state files.
+Behavior follows section 4.5 step by step. `Work - Do` executes and verifies
+the existing task in `Work/Current/` and does not perform queue transitions.
+All queue transitions remain owned by `Work - Move`.
 
 Implementation requirements:
 
 - Discover task files in queue directories by lexical file-name order.
-- Validate discovered queue task filenames against canonical naming from
-  section 4.3 before selection or action; fail fast on mismatch using the
-  mandatory five-line filename-validation error format from section 4.3.
+- Validate discovered `Work/Current/` task filenames against canonical naming
+  from section 4.3 before action; fail fast on mismatch using the mandatory
+  five-line filename-validation error format from section 4.3.
+- If `Current/` is empty and `Next/` is non-empty, validate `Next/` filenames
+  and exit with a clear message instructing the caller to run `Work - Move`
+  (`next -> current`) first.
 - Read/write task files as UTF-8.
 - Use metadata-frontmatter helpers compatible with section 4.4.
 - Build `--context-files` from existing workspace artifacts listed in
@@ -2528,26 +2491,22 @@ Implementation requirements:
   CLI and mirror those lines to `<workspace>/log.txt` via `Logger` using
   events `work-do.execute` and `work-do.verify` respectively.
 - Do not capture worker/verifier output for protocol parsing; workflow
-  decisions rely on exit codes, queue state, and `Work - Move` results.
+  decisions rely on exit codes and queue state finalized by verifier through
+  `Work - Move`.
 - Any filesystem mutation performed directly by `Work - Do` (for example
   scratch verification output paths) must be policy-guarded via section 9.0.
 
 Verification outcome handling:
 
-- Verifier dispatcher non-zero -> invoke `Work - Move` from `current`
-  to `blocked` with kind `DISPATCHER` and a concrete translated one-line
-  reason containing the verifier dispatcher exit code, pass the verification
-  output file if it exists, then return that exit code.
+- Verifier dispatcher non-zero -> return that exit code and report the task
+  remains in `Current/`. `Work - Do` does not perform queue transitions.
 - Verifier timeout when `--verifier-timeout` is provided -> terminate the
-  verifier process, invoke `Work - Move` from `current` to `blocked` with kind
-  `INVALID`, a concrete translated one-line timeout reason, and the
-  verification output file if it exists, then return 3.
+  verifier process, preserve existing verification output bytes, and return 3.
 - Verifier dispatcher zero when neither `--dry-run` nor `--rehearse` is set ->
   verify that the active task was finalized by verifier through `Work - Move`:
   - task in `Done/` -> success;
   - task in `Blocked/` -> return 3;
-  - task still in `Current/` -> invoke `Work - Move` with kind `INVALID`
-    and return 3;
+  - task still in `Current/` -> invalid finalization, return 3;
   - anything else -> precondition error.
 
 Exit codes: 0 success, 2 user/precondition error, 3 verification failure,
@@ -3120,13 +3079,16 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
   (3) validates declared submodule paths exist,
   (4) rolls back the partially created workspace directory on any simulated
   failure during attach/submodule/launcher phases.
-7. `Work - Do` refuses to run when `Blocked` or `Current` is non-empty
-   without the matching action flag.
-   - Dry-run state check: with a task in `Work/Next/`, run `Work - Do
+7. `Work - Do` execution-only ownership check:
+   - it requires exactly one canonical task file in `Work/Current/`;
+   - it refuses to auto-promote from `Next/` and instead instructs using
+     `Work - Move --from next --to current`;
+   - it performs no queue transitions itself.
+   - Dry-run state check: with a task in `Work/Current/`, run `Work - Do
      --dry-run` and confirm no queue file bytes or repository state changed.
-   - Rehearsal state check: with a task in `Work/Next/`, run `Work - Do
-     --rehearse` and confirm the task moves to `Work/Current/`, dispatcher
-     calls are printed/dry-run only, and no verifier finalization is enforced.
+   - Rehearsal state check: with a task in `Work/Current/`, run `Work - Do
+     --rehearse` and confirm dispatcher calls are dry-run only, no queue state
+     changes occur, and no verifier finalization is enforced by `Work - Do`.
    - Verifier finalization check: in a scratch workspace with one active task,
      run one success path and one failure path through verifier-driven
      finalization and confirm both resulting task files contain an appended
@@ -3151,7 +3113,7 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
     whitespace (section 8.22).
 
 10. `Work - Do` validates `Current/` as a singleton queue before restart or
-  `to-done` handling. Create a scratch workspace with two canonical task files
+  `validate-only` handling. Create a scratch workspace with two canonical task files
   in `Work/Current/` and confirm `Work - Do` exits non-zero with a clear
   precondition error before invoking any dispatcher.
 
@@ -3220,7 +3182,7 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
     are unchanged;
   - dispatcher / worker / `Work - *` CLI flag names and enum values remain
     ASCII and exact (for example `--prompt`, `--mode`, `--from`, `--to`,
-    `to-current`, `to-done`);
+    `--current-action`, `restart`, `validate-only`);
   - logger event identifiers from section 9.7 remain exact tokens
     (`work-do.start`, `workspace-archive.done`, etc.).
 
@@ -3263,8 +3225,9 @@ repos, no extra entries in `__archive__/`, and no lasting change to
 
 Harness calls are stubbed throughout: every dispatcher invocation that
 would normally spawn the AI harness is made with `--mode cli --dry-run`,
-so no tokens are spent and no model round-trips happen. Workflow state
-transitions that are intentionally exercised use `--rehearse`. Real
+so no tokens are spent and no model round-trips happen. `Work - Do`
+invocations in rehearsal use `--rehearse`; queue transitions are exercised
+explicitly through `Work - Move`. Real
 subprocess calls are limited to the workflow scripts themselves and to `git`.
 
 Protocol:
@@ -3299,18 +3262,18 @@ Protocol:
    - the per-workspace artifacts (`Issue.md`, `Plan.md`, ..., `Work/`)
      were copied from the template.
 
-5. **Queue a synthetic task and run `Work - Do`.** Write a single task file
+5. **Queue a synthetic task, promote it, and run `Work - Do`.** Write a single task file
    `Workspaces/rehearsal-smoke/Work/Next/w-0001. Rehearsal task.md`
-   (something trivial, e.g. "touch a file in RehearsalA/"). Invoke
+   (something trivial, e.g. "touch a file in RehearsalA/"). Promote it with
+  `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from next --to current --task "w-0001. Rehearsal task.md"`.
+  Then invoke
   `Scripts/Work - Do --workspace Workspaces/rehearsal-smoke --mode cli
   --rehearse`. Assert:
-   - the task file moved out of `Work/Next/`,
    - `Work/Current/` contains the task file with valid rollback frontmatter
      (section 4.4) carrying real commit hashes from the three rehearsal repos,
    - the dispatcher was invoked with the execute prompt and the verify
      prompt (both as dry runs),
-   - because `--rehearse` was set, the task stayed in `Work/Current/` per
-     section 4.5 step 4.
+   - queue state remained unchanged during `Work - Do`.
 
    Additional simulated finalization assertions (still no real harness calls):
    - Simulate verifier success by invoking
@@ -3328,15 +3291,19 @@ Protocol:
      `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from blocked --to done`
      so the task is in `Work/Done/` for the explicit undo exercise below.
 
-6. **Exercise `--current-action to-done`.** Move the task back to
-   `Work/Current/` (for example via `Work - Move --from done --to next`
-   followed by `Work - Move --from next --to current`), then re-invoke
-   `Work - Do` with `--current-action to-done`. Assert the task now lives
-  in `Work/Done/` with its rollback frontmatter intact.
+6. **Exercise `--current-action validate-only`.** Move the task back to
+  `Work/Current/` via `Work - Move --from done --to next` then
+  `Work - Move --from next --to current`, then re-invoke `Work - Do` with
+  `--current-action validate-only --rehearse`. Assert the execute dispatcher is
+  skipped, verifier dispatcher dry-run is invoked, and queue state remains
+  unchanged.
 
 7. **Exercise `Work - Undo`.** Invoke
    `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
-   1` and assert it refuses without `--force`. Then invoke
+   1` and assert it refuses without `--force`. Then finalize the current task
+  into done via
+  `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to done`
+  and invoke
    `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
    1 --force --snapshot-before-undo <tmp-undo-snapshot>`. Assert:
    - the task returned to `Work/Next/` without rollback frontmatter,
