@@ -313,6 +313,11 @@ directories: `Next/`, `Current/`, `Blocked/`, `Done/`.
 - `Current/` holds at most one task file.
 - Selection order from `Next/` is deterministic: lexical file-name order.
 - Task movement must preserve unaffected task-file bytes.
+- Queue filename invariant: every task file in `Next/`, `Current/`,
+  `Blocked/`, and `Done/` must match canonical naming
+  `w-<zero-padded-id>. <title>.md`. Scripts that select or move tasks
+  must validate this and fail fast with a clear user/precondition error
+  naming any offending file.
 
 ### 4.3a Task-file schema (canonical example)
 
@@ -443,6 +448,8 @@ Invoked non-interactively with these arguments:
 Decision order on each invocation:
 
 1. If `Blocked` is non-empty:
+   - Validate `Work/Blocked/` task filenames against section 4.3 before
+     selection; on mismatch exit non-zero with a clear message.
    - If `--blocked-action` is not provided: exit non-zero with a message
      naming the two valid values and stop.
    - Let `<task>` be the first file in `Work/Blocked/` by lexical name.
@@ -453,6 +460,8 @@ Decision order on each invocation:
    - Return after handling one blocked item.
 
 2. Else if `Current` is non-empty:
+   - Validate `Work/Current/` task filenames against section 4.3 before
+     any action; on mismatch exit non-zero with a clear message.
    - If `--current-action` is not provided: exit non-zero with a message
      naming the two valid values and stop.
    - If `to-done`: invoke `Work - Move` with
@@ -461,6 +470,8 @@ Decision order on each invocation:
     current task file (do not recapture rollback metadata).
 
 3. Else if `Current` is empty and `Next` is non-empty:
+  - Validate `Work/Next/` task filenames against section 4.3 before
+    selection; on mismatch exit non-zero with a clear message.
    - Let `<task>` be the first file in `Work/Next/` by lexical name.
    - Invoke `Work - Move` with `--from next --to current --task <task>`.
    - Continue to execution. Note: this pop-and-write step runs even when
@@ -540,6 +551,8 @@ Behavior:
 
 1. Validate source/target transition. Reject anything outside the matrix.
 2. Resolve the task file in source:
+  - task file names must match canonical naming from section 4.3; if
+    `--task` is provided, reject it when non-canonical;
   - if `--task` was provided, it must exist in source;
   - if omitted for `current`, source must contain exactly one task file.
 3. Enforce destination constraints:
@@ -590,11 +603,11 @@ Behavior:
 3. For each affected repository, run `git reset --hard <commit>` then
   `git clean -fdx`. When more than one task in the undo set references
    the same repository, use the **oldest** captured hash (the rollback
-  header of the earliest task in the undo set, i.e. the deepest point
-   in history) so the working tree returns to the state that existed
-  before the first undone task. Stop on first repo failure with a
-   non-zero exit; do not try to recover, but report which repo and what
-   failed.
+  header of the task with the smallest workload ID in the undo set,
+   i.e. the deepest point in history) so the working tree returns to the
+  state that existed before the first undone task. Stop on first repo
+   failure with a non-zero exit; do not try to recover, but report which
+   repo and what failed.
 4. For each undone task, strip rollback and blocked-reason frontmatter fields and move
   the file to `Work/Next/` in original order.
 
@@ -2180,6 +2193,8 @@ queue transitions instead of directly editing queue state files.
 Implementation requirements:
 
 - Discover task files in queue directories by lexical file-name order.
+- Validate discovered queue task filenames against canonical naming from
+  section 4.3 before selection or action; fail fast on mismatch.
 - Read/write task files as UTF-8.
 - Use metadata-frontmatter helpers compatible with section 4.4.
 - Build `--context-files` from existing workspace artifacts listed in
@@ -2254,6 +2269,13 @@ def main():
 ```
 
 Exit codes: 0 success, 2 user/precondition error.
+
+Additional requirements:
+
+- `resolve_source_task` validates canonical task naming from section 4.3
+  for every candidate considered in source queues.
+- `--task` values that do not match canonical naming are rejected with
+  exit code 2 before any file mutation.
 
 Canonical invocation examples (paths shown as relative for readability):
 
@@ -2640,7 +2662,10 @@ and report results.
    synthetic task files and verify each allowed transition from section
    4.5a succeeds, each disallowed transition fails, `Current/` singleton
   enforcement works, and metadata transforms (rollback/blocked-reason
-   add/strip) match sections 4.4 and 4.4a.
+  add/strip) match sections 4.4 and 4.4a. Also verify canonical
+  filename enforcement from section 4.3: non-canonical task filenames
+  are rejected with user/precondition errors across selection and move
+  paths.
 6. `Workspace - Remove` refuses to run without `--synced`.
 7. `Work - Do` refuses to run when `Blocked` or `Current` is non-empty
    without the matching action flag.
