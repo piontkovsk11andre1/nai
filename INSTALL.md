@@ -2496,6 +2496,17 @@ Additional requirements:
 - `--task` values that do not match canonical naming are rejected with
   exit code 2 before any file mutation, using the mandatory five-line
   filename-validation error format from section 4.3.
+- `Work - Move` must emit best-effort workspace log breadcrumbs via
+  `append_workspace_log`:
+  - on entry: `work-move.start` with from/to/task summary;
+  - on metadata/content transform phase: `work-move.transform`;
+  - on verification-output append (when `--verification-output-file` is
+    provided): `work-move.verification-output` naming the file path;
+  - on successful rename/move: `work-move.done`;
+  - on user/precondition failure paths: `work-move.error` with a short
+    translated reason.
+- `Work - Move` logging records workflow decisions and file operations only;
+  it must not capture or replay worker/verifier stdout/stderr streams.
 
 Canonical invocation examples (paths shown as relative for readability):
 
@@ -2607,6 +2618,8 @@ inspection):
 - `Work - Do`: `work-do.start`, `work-do.idle`, `work-do.blocked`,
   `work-do.current`, `work-do.queue`, `work-do.execute`, `work-do.verify`,
   `work-do.done`.
+- `Work - Move`: `work-move.start`, `work-move.transform`,
+  `work-move.verification-output`, `work-move.done`, `work-move.error`.
 - `Work - Undo`: `work-undo.start`, `work-undo.idle`,
   `work-undo.preflight`, `work-undo.rollback`, `work-undo.done`.
 - `Workspace - Create`: `workspace-create.init`,
