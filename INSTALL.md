@@ -95,6 +95,12 @@ Ask these questions one at a time, in this exact order. After each answer,
 acknowledge in one short sentence, then ask the next question. After question
 1, switch to the chosen language for everything that follows.
 
+Conditional exception for safety preflight: after question 4 (workflow root),
+run the collision preflight from section 1. If collisions are found, ask one
+explicit yes/no overwrite-confirmation question before continuing to question
+5. This conditional confirmation is a safety gate, not a new interview topic,
+and does not change the required order of questions 1-6.
+
 Keep the scaffolding interview minimal. Only collect what is needed to
 produce a clean, generic distributive on disk. Everything else (template
 git repositories, naming/branch conventions, framework mapping, external
@@ -177,7 +183,9 @@ then proceed to scaffolding (sections 6-12).
 
 Before the first scaffold write, record a baseline inventory of the workflow
 root (relative paths plus file/dir type). Use this baseline later in section
-13 step 0 so cleanup removes only artifacts created during this run.
+13 step 0 so cleanup removes only artifacts created during this run. Keep the
+inventory ephemeral (in memory or transient process state); do not write a
+baseline file into the workflow root or elsewhere in the distributive tree.
 
 The scaffolded distributive must ship as a clean, generic baseline:
 
@@ -241,7 +249,8 @@ Behavior:
   CSV parsing is strict: split on literal commas, trim outer whitespace per
   entry, and drop empty entries. Commas are protocol delimiters and this
   format does not support escaping; a single path containing a comma cannot
-  be represented and must not be passed through this flag.
+  be represented and must not be passed through this flag. If normalization
+  yields no paths, omit `--context-files` entirely.
 - Forward the subprocess exit code as the dispatcher exit code.
 - Do no other interpretation. In particular, do not validate the workspace.
 - `--new-window` is forwarded verbatim to the worker; the dispatcher itself
@@ -2019,7 +2028,9 @@ def main():
     if args.tail:      cmd += ["--tail", args.tail]
     if args.agent_name:cmd += ["--agent-name", args.agent_name]
     if args.context_files:
-        cmd += ["--context-files", normalize_csv_absolute(args.context_files)]
+      normalized = normalize_csv_absolute(args.context_files)
+      if normalized:
+        cmd += ["--context-files", normalized]
     if args.dry_run:   cmd += ["--dry-run"]
     if args.new_window:cmd += ["--new-window"]
     return subprocess_run(cmd).exit_code
@@ -2032,7 +2043,8 @@ exit code otherwise.
 - split on literal `,` characters;
 - trim outer whitespace on each token;
 - drop empty tokens;
-- return a comma-joined list of absolute paths.
+- return a comma-joined list of absolute paths (or empty string when no
+  tokens remain after normalization).
 
 ### 9.2 `Workspace - Create`
 
@@ -2686,6 +2698,20 @@ and report results.
   - logger event identifiers from section 9.7 remain exact tokens
     (`work-do.start`, `workspace-archive.done`, etc.).
 
+20. Final manifest-exactness check: after step 11 cleanup (and after section
+  13.5 rehearsal restore when rehearsal was enabled), assert that
+  manifest-managed portions of the workflow root match the effective manifest
+  exactly, with no extra scaffolder-created files or directories.
+
+21. Windows detach semantics check (Windows installs only): verify worker
+  wrapper logic for `--new-window` + `--mode tui` spawns a detached new
+  console and returns 0 immediately without waiting; verify this branch is
+  ignored for `cli` mode and on non-Windows OSes.
+
+22. No-implicit-push safety check: verify generated prompts and script
+  guidance never perform `git push` automatically; push operations must
+  require explicit user request.
+
 If any check fails, repair before handoff.
 
 ### 13.5 Optional end-to-end rehearsal
@@ -2819,7 +2845,11 @@ section 13.5 has either completed successfully or been skipped per
 interview question 6), tell the user briefly, in the chosen language,
 that the distributive is ready and that opening the top-level launcher
 will start the `Installation Agent`. If the rehearsal ran, include a
-one-line PASS/FAIL summary. Do not push anything to any remote. Stop.
+one-line PASS/FAIL summary. The same final handoff message must also remind
+the user that their harness may require a per-directory permissions/settings
+file at the workflow root before first launch; name the exact file(s) when
+known, otherwise say to consult the harness documentation. Do not push
+anything to any remote. Stop.
 
 ---
 
