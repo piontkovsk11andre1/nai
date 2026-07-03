@@ -481,8 +481,10 @@ finalization, or verifier dispatcher failure), the workflow must record
 inspecting logs.
 
 Queue movement ownership is strict: queue transitions are finalized only
-through explicit `Work - Move` calls. `Work - Do` never moves task files
-between queue directories.
+through explicit `Work - Move` calls. In normal execution, verifiers trigger
+those calls. For deterministic recovery, `Work - Do` may invoke
+`Work - Move` itself only when verifier dispatch fails or when verifier
+returns without finalizing.
 
 Insert or update a `blocked` object in the task frontmatter. Keep the
 existing `rollback` object verbatim when present. If there is no
@@ -535,8 +537,8 @@ Invoked non-interactively with these arguments:
   `--dry-run` to harness invocations so no model call is made)
 - `--verifier-timeout <seconds>` (optional positive integer; when provided,
   verifier dispatch must finish within this many seconds; default: no timeout)
-- `--finalization-token-ttl-seconds <seconds>` (optional positive integer,
-  default `7200`; no upper bound)
+- `--finalization-token-ttl-seconds <seconds>` (optional positive integer;
+  no upper bound)
 - `--force-unlock` (optional flag; explicit workspace-lock recovery)
 
 Concurrency and lock rules:
@@ -592,21 +594,28 @@ Decision order on each invocation:
      store it in a workspace scratch JSON file, and include it in verifier
      instructions. Token validation is verifier-only and is enforced through
      `Work - Move` (section 4.5a). The token record is UTF-8 and contains at
-     least: `token`, `task_file_name`, `created_utc`, mandatory
-     `expires_utc`, and `verification_output_file`.
-     `expires_utc` is computed from `created_utc` plus
-     `--finalization-token-ttl-seconds` (default 7200 seconds). If
-     `--verifier-timeout` is provided, token TTL must be at least
-     `verifier-timeout + 300` seconds; otherwise exit with user/precondition
-     error before verifier dispatch. There is no maximum TTL cap.
+    least: `token`, `task_file_name`, `created_utc`, optional
+    `expires_utc`, and `verification_output_file`.
+    If `--verifier-timeout` is provided, token expiry is required. Compute
+    token TTL from `--finalization-token-ttl-seconds` when provided, otherwise
+    use `verifier-timeout + 300` seconds. When provided explicitly, token TTL
+    must be at least `verifier-timeout + 300` seconds; otherwise exit with
+    user/precondition error before verifier dispatch. When
+    `--verifier-timeout` is omitted, token expiry defaults to no expiration
+    unless `--finalization-token-ttl-seconds` is explicitly provided. There is
+    no maximum TTL cap.
      Invoke the dispatcher again with the verification worker and the verify
      prompt (`Prompts/Work - Verify.md` inside the workspace). The verifier
      tail is the current task body plus a short translated instruction naming
-     the absolute verification output file path and requiring the verifier to
-     write its full verification output there, then pass that same path to
-     `Work - Move --verification-output-file` and pass the generated verifier
-     token via `--finalization-token` when finalizing. The verifier dispatcher
-     call must run with `--mode cli` regardless of the mode
+    the absolute verification output file path and requiring the verifier to
+    write its full verification output there. The same tail must also include
+    the generated verifier token and two fully formed finalization command
+    examples (success and failure) that use the absolute workflow script path
+    and interpreter. Those command lines must include
+    `--verification-output-file` and `--finalization-token` already filled in,
+    so the verifier can execute one command directly instead of reconstructing
+    arguments. The verifier dispatcher call must run with `--mode cli`
+    regardless of the mode
      requested by the caller, because the verifier must finalize state by
     invoking `Work - Move` directly. The verifier call must stream output live
     to CLI and append the same output lines to `<workspace>/log.txt` via
@@ -624,18 +633,23 @@ Decision order on each invocation:
      verification failure and exit 3; if it is still in `Work/Current/`, print
      a clear timeout error and exit 3. `Work - Do` does not perform queue
      transitions.
-   - If the verifier dispatcher exits non-zero: print a clear error that the
-     verifier failed and the task remains in `Current`, then exit with the
-     verifier dispatcher's code. `Work - Do` does not perform queue
-     transitions.
+   - If the verifier dispatcher exits non-zero: print a clear error and
+     attempt deterministic recovery by invoking `Work - Move` with
+     `current -> blocked`, `--reason-kind DISPATCHER`, the generated
+     `--finalization-token`, and the current verification output file path.
+     If this recovery move succeeds, exit with the verifier dispatcher's code.
+     If it fails, report that failure and exit with the verifier dispatcher's
+     code while leaving the task in `Current`.
    - Otherwise, when neither `--dry-run` nor `--rehearse` is set, validate
      post-verify state:
      - if the same task file now exists in `Work/Done/`: success;
      - if it now exists in `Work/Blocked/`: failure, exit code 3;
      - if it still exists in `Work/Current/`: treat as invalid verifier
-       finalization, print a clear error that verifier must finalize through
-       `Work - Move`, and exit 3. `Work - Do` does not move it to
-       `Blocked/` automatically;
+       finalization, print a clear error, and attempt deterministic recovery by
+       invoking `Work - Move --from current --to blocked --reason-kind INVALID`
+       with the generated `--finalization-token` and verification output path.
+       If recovery succeeds, exit 3; if recovery fails, report the error and
+       exit 3 while leaving the task in `Current`;
      - any other state is a precondition error and exits non-zero.
    - On success: print one short success line.
    - When `--dry-run` is set and `--rehearse` is not set, skip all mutation,
@@ -648,10 +662,9 @@ Decision order on each invocation:
      `.tmp/verify-<id>.txt`) and the verifier token JSON file are workflow
      scratch artifacts created by `Work - Do`. On a terminal reconciled
      outcome (`Done` or `Blocked`), `Work - Do` cleans only the scratch
-     artifacts from that run. On timeout, dispatcher failure, invalid
-     finalization, or other non-terminal outcomes, keep them for
-     troubleshooting. Queue transitions still do not perform implicit scratch
-     cleanup.
+     artifacts from that run. On non-terminal outcomes (for example timeout or
+     failed fallback finalization), keep them for troubleshooting. Queue
+     transitions still do not perform implicit scratch cleanup.
 
 Additional context passed to the dispatcher: build repeated
 `--context-file <absolute-path>` flags from existing artifacts in the workspace
@@ -726,7 +739,7 @@ Behavior:
     workspace, require `--finalization-token` and reject on mismatch. Validate
     against the active token JSON record in workspace scratch: provided token
     equals `token`, source task equals `task_file_name`, and finalization time
-    is not later than mandatory `expires_utc`.
+    is not later than `expires_utc` when that field is present.
 6. If `--verification-output-file` is provided, read it as UTF-8 and append
   it to the task as a new section at EOF:
 
@@ -1550,12 +1563,17 @@ in any order:
 - The dispatcher contract (the canonical flags of `Scripts/Agent.<ext>`).
 - The work-queue directory set (`Next/`, `Current/`, `Blocked/`, `Done/`) and
   task-file naming convention.
+- A short note on verifier finalization reliability: normal task finalization
+  is verifier-driven through `Work - Move`; deterministic fallback to
+  `Blocked` is allowed only when verifier dispatch fails or exits without
+  finalizing.
 - The typical end-to-end flow that mirrors section 6.
 - A short safety note: workspace removal is archive-only, `Work - Undo` is
   destructive only with explicit `--force` plus snapshot preflight, and no
   remote push happens without explicit user request. Note that runtime policy
   protects script-owned mutations, not arbitrary writes by the external AI
-  harness.
+  harness. Also note that global backlog/changelog sync is append-only under
+  workflow-root lock protection.
 - A bullet list of the scripts with a one-line purpose each.
 
 ### 8.1a `Installation Report.md`
@@ -1780,19 +1798,23 @@ Guidance:
        `Scripts/Agent.<ext>` with
        `--worker Default --prompt <abs Installation Agent path> --mode cli
        --dry-run` and confirm it prints a harness command without error.
+    - Harness binary liveness check before creating the installation report:
+      run a no-token startup probe for the configured harness (`<binary>
+      --version`, or `<binary> --help` when `--version` is unsupported) and
+      confirm the process starts successfully.
     - Top-level launcher (before step 8) still parses
        and targets the dispatcher with valid arguments per section 10.
        On Windows with Python launchers, confirm that `Open Agent.cmd`
        resolves Python in this order: `py` on `PATH`, then `python` on
        `PATH`, then `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`,
        and that it does not hardcode a user-profile absolute path.
-     - Harness permission readiness: confirm the configured harness can at
-       least be started in dry-run command construction, the prompt file is
-       readable as UTF-8, and the user has been shown a concise checklist of
-       any harness-specific workspace permission/settings files that may be
-       needed at the workflow root. Do not invent or create those settings
-       files. If the exact file names are unknown, say to consult the harness
-       documentation.
+     - Harness permission readiness: confirm the configured harness can be
+       started by the liveness probe above and in dry-run command
+       construction, the prompt file is readable as UTF-8, and the user has
+       been shown a concise checklist of any harness-specific workspace
+       permission/settings files that may be needed at the workflow root. Do
+       not invent or create those settings files. If the exact file names are
+       unknown, say to consult the harness documentation.
      If any check fails, repair the offending artifact and re-run the
      affected check. Only proceed to step 8 once all checks pass.
 
@@ -1930,6 +1952,10 @@ the fields used by the Integration Agent when syncing from workspaces:
 - Backlog entry: Date, Workspace, Source, Follow-up.
 - Changelog entry: Date, Workspace, Scope, Outcome.
 
+When Integration sync appends to these global files, updates are append-only
+and must run under a workflow-root lock from `Policy` so concurrent syncs do
+not interleave or overwrite entries.
+
 ### 8.5 Template `Workspace.md`
 
 Headings: "Structure", "Workspace naming convention", "Branch convention",
@@ -2048,7 +2074,9 @@ Guidance:
   explicit command if the user wants it.
 - Rules: one question at a time, no push without explicit user request;
   resolve cross-agent handoffs against the current workspace unless the user
-  names a different workspace.
+  names a different workspace. When syncing workspace backlog/changelog into
+  global files under `Workspaces/`, use append-only writes under the
+  workflow-root lock exposed by `Policy`.
 
 ### 8.16 Template `Prompts/Research Agent.md`
 
@@ -2276,15 +2304,17 @@ Guidance:
     one-line reason.
   In both paths, the verifier passes `--verification-output-file` with the
   exact path provided in the verifier tail so the full verification output is
-  appended to the task file.
+  appended to the task file. When the tail includes ready-to-run finalization
+  command lines, execute one of those command lines directly instead of
+  reconstructing arguments.
 - If the `Work - Move` finalization call fails, the verifier must report that
   failure and exit non-zero. The verifier must not claim success unless
   `Work - Move` succeeded.
 - If the verifier exits without finalizing through `Work - Move`, `Work - Do`
-  treats the run as invalid finalization and exits non-zero while the task
-  remains in `Current/`. `Work - Do` does not perform queue transitions. To
-  record `INVALID` explicitly, finalize through `Work - Move --from current
-  --to blocked --reason-kind INVALID`.
+  treats the run as invalid finalization and exits non-zero. `Work - Do`
+  attempts deterministic recovery by moving `current -> blocked` with
+  `--reason-kind INVALID`; if that recovery fails, the task remains in
+  `Current/` and the error is reported.
 - Output expectation: verifier prose is free-form and human-readable.
   `Work - Do` does not parse protocol tokens from verifier output.
   In CLI invocations, verifier output is shown live and mirrored into
@@ -2415,6 +2445,9 @@ Required helpers:
 - `acquire_workspace_lock(workspace, role, timeout_seconds=10,
   poll_interval_ms=200, force_unlock=False)` -> lock handle or user/precondition
   error.
+- `acquire_workflow_lock(workflow_root, role, timeout_seconds=10,
+  poll_interval_ms=200, force_unlock=False)` -> lock handle or user/precondition
+  error.
 - `release_workspace_lock(lock_handle)` -> best-effort release.
 - `read_workspace_lock(workspace)` -> lock metadata for diagnostics.
 
@@ -2426,11 +2459,21 @@ Workspace lock model (required):
   and recovery guidance;
 - lock file metadata includes at least owner PID, host identifier, and
   `created_utc` timestamp;
+- lock creation is atomic (`O_CREAT|O_EXCL` or language-equivalent) so two
+  contenders cannot both acquire the same lock;
 - stale dead-owner reclaim is automatic only when the lock owner host matches
   the current host and the recorded owner PID is no longer alive; reclaim
   attempts are best-effort and logged;
 - lock recovery is explicit only through `force_unlock=True` (surfaced by
   script flags such as `--force-unlock`) for all other contention cases.
+
+Workflow-root lock model (required):
+- one lock per workflow root path for operations that mutate shared global
+  artifacts under `Workspaces/`;
+- used for append-only synchronization of `Workspaces/Backlog.md` and
+  `Workspaces/Changelog.md` so concurrent workspace syncs do not race;
+- acquisition, contention, stale-owner reclaim, and explicit force-unlock
+  semantics match the workspace lock model above.
 
 Policy model:
 - file-boundary and operation-type only; no per-section policy;
@@ -2476,7 +2519,8 @@ Minimum policy profile matrix (required baseline):
 - `integration-agent` (when routed through script/tooling path):
   - may write workspace `Issue.md`, `PR.md`, `Backlog.md`, `Changelog.md` and
     global `Workspaces/Backlog.md`, `Workspaces/Changelog.md` through explicit
-    workflow actions.
+    workflow actions;
+  - global file updates are append-only and must hold the workflow-root lock.
 
 Required denial message shape:
 
@@ -2672,8 +2716,7 @@ propagate git failures from worktree removal.
 Inputs: as in section 4.5.
 
 Behavior follows section 4.5 step by step. `Work - Do` executes and verifies
-the existing task in `Work/Current/` and does not perform queue transitions.
-All queue transitions remain owned by `Work - Move`.
+the existing task in `Work/Current/`.
 
 Implementation requirements:
 
@@ -2710,27 +2753,33 @@ Implementation requirements:
 - `Work - Do` uses lock-aware critical sections from section 4.5 and supports
   `--force-unlock` for explicit lock recovery.
 - `Work - Do` creates a verifier token JSON record in workspace scratch for
-  each verifier run (`token`, `task_file_name`, `created_utc`, mandatory
+  each verifier run (`token`, `task_file_name`, `created_utc`, optional
   `expires_utc`, `verification_output_file`) and passes only the opaque token via
   `--finalization-token` to verifier-driven `Work - Move` calls.
 - `Work - Do` enforces one active verifier run per workspace: if an unexpired
   active token record already exists, fail with user/precondition error (2)
   before verifier dispatch; expired records may be replaced.
-- `Work - Do` supports `--finalization-token-ttl-seconds` (default 7200,
-  positive integer, no maximum). If `--verifier-timeout` is set, enforce
-  `finalization-token-ttl-seconds >= verifier-timeout + 300` before starting
-  verifier dispatch.
+- `Work - Do` supports `--finalization-token-ttl-seconds` (positive integer,
+  no maximum). If `--verifier-timeout` is set, token expiry is required:
+  enforce `finalization-token-ttl-seconds >= verifier-timeout + 300` when
+  provided explicitly; when omitted, set token TTL to
+  `verifier-timeout + 300`. If `--verifier-timeout` is omitted, token expiry
+  defaults to none unless TTL is explicitly provided.
+- `Work - Do` includes in verifier tail two ready-to-run finalization command
+  examples (success/failure) with absolute script path, interpreter,
+  `--verification-output-file`, and `--finalization-token` pre-filled.
 - `Work - Do` owns lifecycle of verifier scratch artifacts it creates for a
   run (token JSON + verification output file): delete them only after a
   terminal reconciled outcome (`Done/Blocked`), and retain them on timeout,
-  dispatcher failure, invalid finalization, or other non-terminal failures.
+  failed fallback finalization, or other non-terminal failures.
 
 Verification outcome handling:
 
-- Verifier dispatcher non-zero -> return that exit code and report the task
-  remains in `Current/`. `Work - Do` does not perform queue transitions.
-  Recording `DISPATCHER` in blocked frontmatter is done only via explicit
-  `Work - Move --from current --to blocked --reason-kind DISPATCHER`.
+- Verifier dispatcher non-zero -> attempt deterministic recovery via
+  `Work - Move --from current --to blocked --reason-kind DISPATCHER` using the
+  run token and verification output path; if recovery succeeds, return the
+  verifier dispatcher exit code. If recovery fails, report both failures and
+  return the verifier dispatcher exit code with task still in `Current/`.
 - Verifier timeout when `--verifier-timeout` is provided -> terminate the
   verifier process, preserve existing verification output bytes, then perform
   lock-protected queue reconciliation: if task is in `Done/`, return success;
@@ -2743,9 +2792,10 @@ Verification outcome handling:
   `Work - Move`:
   - task in `Done/` -> success;
   - task in `Blocked/` -> return 3;
-  - task still in `Current/` -> invalid finalization, return 3 and keep the
-    task in `Current/`; recording `INVALID` in blocked frontmatter requires
-    explicit `Work - Move`.
+  - task still in `Current/` -> invalid finalization; attempt deterministic
+    recovery via `Work - Move --from current --to blocked --reason-kind INVALID`
+    with run token and verification output path. Return 3. If recovery fails,
+    keep task in `Current/` and report the failure.
   - anything else -> precondition error.
 
 Exit codes: 0 success, 2 user/precondition error, 3 verification failure,
@@ -2866,7 +2916,7 @@ Additional requirements:
 - Add `--force-unlock` (optional flag) so lock recovery is explicit when a
   stale lock must be cleared manually.
 - `assert_finalization_token_if_active` validates against the active token
-  JSON record in workspace scratch (`token`, `task_file_name`, mandatory
+  JSON record in workspace scratch (`token`, `task_file_name`, optional
   `expires_utc`) and returns a user/precondition error on mismatch.
 
 Canonical invocation examples (paths shown as relative for readability):
@@ -3229,6 +3279,9 @@ examples follow.
 
 Resolution: try `which opencode`. On Windows, npm installs leave shims under
 `%APPDATA%\npm\opencode.cmd`; fall back to that path before failing.
+For installation-time readiness checks, treat `opencode --version` (or
+`opencode --help` when version flag is unsupported) as a startup liveness
+probe in addition to dispatcher dry-run command construction.
 
 ### 11.2 Claude Code (example)
 
@@ -3335,7 +3388,9 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
    harness command. Example: invoke the dispatcher with
    `--worker Default --prompt <abs Installation Agent path> --mode cli --dry-run`.
   Also verify that an unreadable or invalid UTF-8 prompt file is rejected
-  before any worker or harness process is started.
+  before any worker or harness process is started. Also run a harness
+  startup liveness probe (`<binary> --version` or `<binary> --help`) and
+  confirm the configured harness process can be started locally.
 4. Each per-agent launcher has the expected content and working-directory
    semantics per section 10. On Windows with Python launchers, validate that
    each `.cmd` file resolves Python in this order: `py` on `PATH`, then
@@ -3386,7 +3441,9 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
   - with `Current/` empty and `Next/` non-empty it exits with code 2;
   - with `Current/` empty and `Blocked/` non-empty it exits with code 2;
   - with both `Current/` and `Next/` and `Blocked/` empty it exits 0;
-   - it performs no queue transitions itself.
+  - it does not auto-promote from `Next/` and does not auto-finalize
+    success to `Done/`; deterministic fallback to `Blocked/` is allowed only
+    for verifier dispatcher failure or invalid finalization.
    - Dry-run state check: with a task in `Work/Current/`, run `Work - Do
      --dry-run` and confirm no queue file bytes or repository state changed.
    - Rehearsal state check: with a task in `Work/Current/`, run `Work - Do
@@ -3398,19 +3455,22 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
      `Verification Output` section, with failures ending in `Work/Blocked/`.
    - Invalid/dispatcher non-mutation check: simulate verifier dispatcher
      non-zero and verifier exit-without-finalization cases; confirm
-     `Work - Do` exits non-zero, keeps the task in `Work/Current/`, and does
-     not move queue files automatically. If blocked metadata is required,
-     confirm it is recorded only through explicit `Work - Move` calls.
+     `Work - Do` exits non-zero and attempts deterministic fallback
+     finalization to `Work/Blocked/` with `DISPATCHER` or `INVALID`
+     respectively; if fallback move fails, task remains in `Work/Current/`
+     and the failure is reported.
    - Verifier token gate check: when a verifier token is active for the
      workspace, confirm `Work - Move --from current --to done|blocked`
      rejects missing or mismatched `--finalization-token` and accepts a
      matching token. Also confirm task-name mismatch and expired-token cases
      are rejected based on the active token JSON record.
    - Token TTL control check: confirm `Work - Do` uses default
-     `--finalization-token-ttl-seconds=7200` when omitted, accepts explicit
-     positive overrides with no upper bound, and rejects values that violate
-     the minimum safety rule when `--verifier-timeout` is provided
-     (`ttl < verifier-timeout + 300`).
+     no-expiry tokens when both `--verifier-timeout` and
+     `--finalization-token-ttl-seconds` are omitted, uses
+     `verifier-timeout + 300` when timeout is set and TTL is omitted, accepts
+     explicit positive TTL overrides with no upper bound, and rejects values
+     that violate the minimum safety rule when `--verifier-timeout` is
+     provided (`ttl < verifier-timeout + 300`).
    - Timeout reconciliation check: force a verifier timeout at the boundary
      and confirm post-timeout reconciliation prefers finalized queue state
      (`Done/` or `Blocked/`) over raw timeout status; only unresolved
@@ -3554,6 +3614,9 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
     user/precondition error, dead same-host owner PID reclaim works when the
     recorded owner is no longer alive, and other lock breaking is possible
     only through explicit `--force-unlock` flows;
+  - lock-file creation is atomic (`O_CREAT|O_EXCL` or language-equivalent);
+  - workflow-root lock behavior protects append-only updates to global
+    `Workspaces/Backlog.md` and `Workspaces/Changelog.md`;
   - unknown or missing task schema versions are rejected with
     user/precondition errors before mutation by queue-touching scripts;
   - policy denials return user/precondition errors with actionable recovery.

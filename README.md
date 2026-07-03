@@ -31,6 +31,9 @@ The first time you open the top-level launcher it runs a one-off
 conventions, asks about any add-ons or tweaks you want, and then
 creates `Installation Report.md`. From then on, the same static launcher
 detects that report file and opens the day-to-day **Workspace Agent**.
+As part of installation checks, the installer verifies both dispatcher
+dry-run command construction and basic harness startup liveness
+(`--version` / `--help`) before marking installation complete.
 
 ## Installation Report Audit
 
@@ -121,8 +124,8 @@ Scripts/
   Logger.<ext>                      shared logging utility
   Workers/Default.<ext>             AI harness wrapper
 Workspaces/
-  Backlog.md                        global backlog (Integration Agent syncs into)
-  Changelog.md                      global changelog (Integration Agent syncs into)
+  Backlog.md                        global backlog (append-only sync under workflow-root lock)
+  Changelog.md                      global changelog (append-only sync under workflow-root lock)
   __template__/                     copied for every new workspace
     1. Open Integration Agent.<launcher>    per-agent launchers
     2. Open Research Agent.<launcher>
@@ -216,7 +219,10 @@ A few things that make this different from "just prompting an agent":
   its own prompt, and finalization happens through `Work - Move`.
   Successful verification moves the active task to `Done`, failed
   verification moves it to `Blocked`, and verification output is
-  appended into the task file in both cases.
+  appended into the task file in both cases. If verifier dispatch fails
+  or exits without finalizing, `Work - Do` performs a deterministic
+  fallback finalization to `Blocked` (`DISPATCHER` / `INVALID`) instead
+  of leaving the task silently stuck in `Current`.
 - **Fast, explicit handoffs.** The five workspace roles can switch in
   the same chat on request, so you can redirect flow without losing
   context. The launcher-based path still exists when you want a fresh
