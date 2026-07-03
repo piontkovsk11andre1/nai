@@ -249,9 +249,12 @@ A thin transport layer with this CLI:
 - `--new-window` (optional flag, passthrough hint for the worker)
 
 Behavior:
-- Validate `--prompt` exists.
+- Validate `--prompt` exists and is readable UTF-8 text before launching
+  any worker process.
 - Resolve the worker display name to `Scripts/Workers/<name>.<ext>`, restricted
-  to that folder. Sanitize the name by stripping every character outside
+  to that folder under the workflow root (the directory containing the
+  dispatcher script), not the caller's current working directory. Sanitize
+  the name by stripping every character outside
   letters, digits, space, hyphen, underscore, and dot; reject empty results.
   Also reject names that begin with a dot or consist only of dots and
   spaces after sanitization (this rules out things like `.bashrc` or
@@ -269,6 +272,8 @@ Behavior:
 - Run the worker subprocess with live stdio passthrough: worker stdout/stderr
   are visible in the dispatcher's CLI output as they are produced. The
   dispatcher must not buffer/capture worker output for protocol parsing.
+  Caller scripts may tee these live streams for human logging/visibility, but
+  must not parse them as protocol tokens.
 - Forward the subprocess exit code as the dispatcher exit code.
 - Do no other interpretation. In particular, do not validate the workspace.
 - `--new-window` is forwarded verbatim to the worker; the dispatcher itself
@@ -456,10 +461,10 @@ rollback:
 
 ### 4.4a Blocked reason frontmatter field
 
-When a task moves into `Blocked/` (failed verification, invalid verifier
-finalization, or verifier dispatcher failure), the workflow must record
-**why** directly inside the task file so the user can act without
-inspecting logs.
+When a task moves into `Blocked/`, the workflow must record **why** directly
+inside the task file so the user can act without inspecting logs. In the
+default flow, this move is verifier-driven (`current -> blocked` with
+`--reason-kind FAIL`).
 
 Insert or update a `blocked` object in the task frontmatter. Keep the
 existing `rollback` object verbatim when present. If there is no
@@ -480,10 +485,11 @@ blocked:
 - `<one-line reason>` is a single-line human-readable explanation in
   the chosen natural language:
   - for `FAIL`: verifier-provided failure reason;
-  - for `INVALID`: a fixed translated sentence stating that verifier
-    finished without finalizing task movement via `Work - Move`;
-  - for `DISPATCHER`: a fixed translated sentence stating that the
-    verifier dispatcher exited with code `<N>`.
+  - for `INVALID`: a fixed translated sentence stating invalid
+    finalization (the verifier finished without finalizing via
+    `Work - Move`) when a caller explicitly classifies the block this way;
+  - for `DISPATCHER`: a fixed translated sentence stating verifier
+    dispatcher failure when a caller explicitly classifies the block this way.
 - Reason precedence is deterministic: when a caller provides `--reason`,
   keep it (after one-line sanitization); when omitted, synthesize the
   fixed translated sentence for the selected kind.
@@ -511,6 +517,11 @@ Invoked non-interactively with these arguments:
   `--dry-run` to harness invocations so no model call is made)
 - `--verifier-timeout <seconds>` (optional positive integer; when provided,
   verifier dispatch must finish within this many seconds)
+
+Meaning of `--current-action`:
+- `restart`: run the execution phase for the current task from scratch, then
+  run verification.
+- `validate-only`: skip execution and run verification only.
 
 Decision order on each invocation:
 
@@ -555,7 +566,8 @@ Decision order on each invocation:
     invoking `Work - Move` directly. The verifier call must stream output live
     to CLI and append the same output lines to `<workspace>/log.txt` via
     `Logger` under `work-do.verify`.
-    `Work - Do` must not capture verifier stdout/stderr for protocol parsing;
+    `Work - Do` may tee verifier stdout/stderr for live CLI visibility and
+    log mirroring, but must not capture/parse it for protocol parsing;
     task finalization is determined only by queue state and `Work - Move`.
      If `--verifier-timeout` is provided and the verifier dispatcher does not
      finish before the timeout, terminate the verifier process, preserve any
@@ -632,10 +644,7 @@ Behavior:
   - `next -> current`: capture repo hashes (section 4.4) and ensure
     rollback frontmatter exists;
   - `current -> blocked`: add/update blocked-reason frontmatter field (section 4.4a)
-    using `--reason-kind` and `--reason`; when `--reason-kind DISPATCHER`
-    is used and `--reason` is omitted, synthesize the fixed translated
-    one-line reason that includes exit code `<N>` if available from caller
-    context, otherwise uses the same fixed sentence without code;
+    using `--reason-kind` and `--reason`;
   - `blocked -> current` and `blocked -> done`: strip blocked-reason field;
   - `done -> next`: strip rollback and blocked-reason fields (remove the
     frontmatter block entirely if it becomes empty).
@@ -1777,6 +1786,9 @@ Guidance:
 Each contains a one-line description and an "Entry format" section listing
 the fields used by the Integration Agent when syncing from workspaces:
 
+The schemas here are intentionally global and differ from the per-workspace
+schemas in section 8.7.
+
 - Backlog entry: Date, Workspace, Source, Follow-up.
 - Changelog entry: Date, Workspace, Scope, Outcome.
 
@@ -1816,6 +1828,9 @@ Per-workspace versions written from the workspace's point of view. They use
 different fields than the global files in section 8.4 because the Integration Agent
 is responsible for transforming local entries into the global shape when
 syncing.
+
+These per-workspace schemas are intentionally different from the global
+schemas in section 8.4.
 
 - Per-workspace `Backlog.md` entry format:
   `Priority`, `Title`, `Reason deferred`, `Suggested next step`.
@@ -2088,6 +2103,8 @@ Guidance:
     read-only context during execution: `Status`, `Plan`, `Research`,
     `Notes`, `Assignments`, `Issue`, `PR`, `Changelog`, `Backlog`,
     `Facts`, and every file under `Work/`.
+    This read-only rule applies to the automated `Work - Execute` invocation,
+    not to separate interactive Worker Agent responsibilities in section 8.18.
   - when a mutation is needed, use policy-enforced workflow paths (section
     4.1a and 9.0). Do not rely on post-hoc checks.
 - Output expectation: clear execution result focused on what was done, what
@@ -2120,8 +2137,8 @@ Guidance:
   failure and exit non-zero. The verifier must not claim success unless
   `Work - Move` succeeded.
 - If the verifier exits without finalizing through `Work - Move`, `Work - Do`
-  treats the task as `INVALID`, moves it to `Blocked/`, and preserves the
-  verification output file when one was written.
+  reports invalid finalization and exits non-zero; the task remains in
+  `Work/Current/`. `Work - Do` does not perform queue transitions.
 - Output expectation: verifier prose is free-form and human-readable.
   `Work - Do` does not parse protocol tokens from verifier output.
   In CLI invocations, verifier output is shown live and mirrored into
@@ -2303,11 +2320,11 @@ def main():
         print_error("Prompt not found: " + args.prompt)
         return 2
     try:
-        worker_path = resolve_worker(args.worker)  # folder-restricted
+      worker_path = resolve_worker(args.worker)  # folder-restricted under dispatcher directory
     except invalid:
         print_error(...)
         return 2
-    cmd = [interpreter, worker_path,
+    cmd = [current_runtime_interpreter(), worker_path,
            "--prompt", absolute(args.prompt),
            "--mode", args.mode]
     if args.workspace: cmd += ["--workspace", absolute(args.workspace)]
@@ -2322,6 +2339,12 @@ def main():
     return subprocess_run(cmd, stdout=inherit, stderr=inherit).exit_code
 ```
 
+  `resolve_worker(...)` resolves against the workflow root anchored at the
+  dispatcher script location, not the process current working directory.
+
+  `current_runtime_interpreter()` means the active interpreter/runtime that is
+  executing the dispatcher in the chosen scripting language.
+
   The dispatcher must read the prompt file as UTF-8 before invoking the worker.
   If the prompt exists but is unreadable or not valid UTF-8, exit 2 with a clear
   message. This fails before any harness process is started.
@@ -2329,6 +2352,10 @@ def main():
   The dispatcher runs worker processes in passthrough mode: no stdout/stderr
   capture for parsing, no buffering requirements beyond the runtime default,
   and no mutation of worker output text.
+
+  Caller scripts may tee dispatcher streams line-by-line to mirror output
+  into logs, provided they do not parse those streams as protocol control
+  data.
 
   Exit codes: 0 success, 2 user error (bad prompt, unreadable prompt, invalid
   UTF-8 prompt, or bad worker), worker's own exit code otherwise.
@@ -2496,7 +2523,8 @@ Implementation requirements:
 - For execution and verifier dispatcher calls, stream stdout/stderr live to
   CLI and mirror those lines to `<workspace>/log.txt` via `Logger` using
   events `work-do.execute` and `work-do.verify` respectively.
-- Do not capture worker/verifier output for protocol parsing; workflow
+- Work - Do may tee worker/verifier streams for mirroring, but must not
+  capture/parse them for protocol control; workflow
   decisions rely on exit codes and queue state finalized by verifier through
   `Work - Move`.
 - Any filesystem mutation performed directly by `Work - Do` (for example
@@ -2671,6 +2699,10 @@ def main():
 `parse_csv(args.context_files)` must follow the dispatcher CSV contract from
 section 9.1 (strict split/trim/drop-empty; commas are delimiters only and
 cannot be escaped).
+
+For wrappers that use detected context-attach flags (for example opencode),
+if process start fails due to an unrecognized attach flag, retry exactly once
+without any context attach flags and continue with the same bootstrap text.
 
 `tail_prefix(language)` returns the translated form of:
 `After reading the files above, the user asked you to do this:`
@@ -3107,6 +3139,9 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
      run one success path and one failure path through verifier-driven
      finalization and confirm both resulting task files contain an appended
      `Verification Output` section, with failures ending in `Work/Blocked/`.
+   - Invalid-finalization/non-zero verifier check: confirm `Work - Do` does
+     not auto-move queue state on these paths; the task remains in
+     `Work/Current/` and the command exits non-zero.
    - Output visibility check: in a scratch workspace, run one execution and
      one verifier pass and confirm their stdout/stderr are visible live in CLI
      and mirrored into `<workspace>/log.txt` under `work-do.execute` and
