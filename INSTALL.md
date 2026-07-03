@@ -80,8 +80,8 @@ Concretely, when you finish scaffolding:
    valid, and obey the contracts in section 9.
 4. All workflow paths required by the contracts are wired end to end:
    `Workspace - Create`, `Workspace - Remove` (archive), `Work - Do`,
-   `Work - Undo`, dispatcher (`Agent`), and at least the `Default` worker
-   wrapper.
+  `Work - Move`, `Work - Undo`, dispatcher (`Agent`), and at least the
+  `Default` worker wrapper.
 
 You are done when the verification checklist in section 13 passes. The
 user's next step after you stop is to open the top-level launcher, which
