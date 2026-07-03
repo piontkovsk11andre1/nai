@@ -261,6 +261,9 @@ Behavior:
   format does not support escaping; a single path containing a comma cannot
   be represented and must not be passed through this flag. If normalization
   yields no paths, omit `--context-files` entirely.
+- Run the worker subprocess with live stdio passthrough: worker stdout/stderr
+  are visible in the dispatcher's CLI output as they are produced. The
+  dispatcher must not buffer/capture worker output for protocol parsing.
 - Forward the subprocess exit code as the dispatcher exit code.
 - Do no other interpretation. In particular, do not validate the workspace.
 - `--new-window` is forwarded verbatim to the worker; the dispatcher itself
@@ -298,6 +301,9 @@ through. Each wrapper:
   Windows, the wrapper spawns the harness in a detached new console (e.g.
   `subprocess.Popen` with `CREATE_NEW_CONSOLE`) and returns 0 immediately
   without waiting. Ignored on other OSes or in `cli` mode.
+- In non-detached execution, stream harness stdout/stderr through the wrapper
+  to the caller CLI output as they are produced; do not capture them for
+  parsing.
 - The harness subprocess is started with its working directory set to the
   resolved `--workspace` path when provided, otherwise the wrapper's current
   working directory.
@@ -527,6 +533,9 @@ Decision order on each invocation:
    - Invoke the dispatcher with the execution worker, the execute prompt
      (`Prompts/Work - Execute.md` inside the workspace), the workspace path,
      the mode, and the tail.
+   - The execution call must stream output live to CLI and also append the
+     same output lines to `<workspace>/log.txt` via `Logger` under
+     `work-do.execute`.
    - If the dispatcher exits non-zero: print a clear message that the task
      remains in `Current` and exit with that code.
    - Otherwise create a unique UTF-8 verification output file path under a
@@ -539,7 +548,11 @@ Decision order on each invocation:
      `Work - Move --verification-output-file` when finalizing. The verifier
      dispatcher call must run with `--mode cli` regardless of the mode
      requested by the caller, because the verifier must finalize state by
-     invoking `Work - Move` directly. The verifier call may stream output live.
+    invoking `Work - Move` directly. The verifier call must stream output live
+    to CLI and append the same output lines to `<workspace>/log.txt` via
+    `Logger` under `work-do.verify`.
+    `Work - Do` must not capture verifier stdout/stderr for protocol parsing;
+    task finalization is determined only by queue state and `Work - Move`.
      If `--verifier-timeout` is provided and the verifier dispatcher does not
      finish before the timeout, terminate the verifier process, preserve any
      verification output file bytes that exist, invoke `Work - Move` with
@@ -2077,6 +2090,8 @@ Guidance:
     `Facts`, and every file under `Work/`.
 - Output expectation: clear execution result focused on what was done, what
   remains, and, if blocked, the blocker and the suggested next action.
+  In CLI invocations, this output is shown live and mirrored into
+  `<workspace>/log.txt` by `Work - Do`.
 
 ### 8.21 Template `Prompts/Work - Verify.md`
 
@@ -2107,6 +2122,8 @@ Guidance:
   verification output file when one was written.
 - Output expectation: verifier prose is free-form and human-readable.
   `Work - Do` does not parse protocol tokens from verifier output.
+  In CLI invocations, verifier output is shown live and mirrored into
+  `<workspace>/log.txt` by `Work - Do`.
 
 ### 8.22 Template `Facts.md`
 
@@ -2224,12 +2241,16 @@ def main():
         cmd += ["--context-files", normalized]
     if args.dry_run:   cmd += ["--dry-run"]
     if args.new_window:cmd += ["--new-window"]
-    return subprocess_run(cmd).exit_code
+    return subprocess_run(cmd, stdout=inherit, stderr=inherit).exit_code
 ```
 
   The dispatcher must read the prompt file as UTF-8 before invoking the worker.
   If the prompt exists but is unreadable or not valid UTF-8, exit 2 with a clear
   message. This fails before any harness process is started.
+
+  The dispatcher runs worker processes in passthrough mode: no stdout/stderr
+  capture for parsing, no buffering requirements beyond the runtime default,
+  and no mutation of worker output text.
 
   Exit codes: 0 success, 2 user error (bad prompt, unreadable prompt, invalid
   UTF-8 prompt, or bad worker), worker's own exit code otherwise.
@@ -2383,6 +2404,11 @@ Implementation requirements:
   file exists; Facts is a search-on-demand reference (section 8.22).
   Sort the resulting absolute paths lexically before emitting the CSV.
 - Verifier dispatcher call is always `--mode cli`.
+- For execution and verifier dispatcher calls, stream stdout/stderr live to
+  CLI and mirror those lines to `<workspace>/log.txt` via `Logger` using
+  events `work-do.execute` and `work-do.verify` respectively.
+- Do not capture worker/verifier output for protocol parsing; workflow
+  decisions rely on exit codes, queue state, and `Work - Move` results.
 
 Verification outcome handling:
 
@@ -2524,7 +2550,7 @@ def main():
       spawn_detached_new_console(cmd, cwd=workdir)
         return 0
     try:
-      return subprocess_run(cmd, cwd=workdir).exit_code
+      return subprocess_run(cmd, cwd=workdir, stdout=inherit, stderr=inherit).exit_code
     except missing_binary:
         print_error("Could not start '<harness>'.")
         return 127
@@ -2560,6 +2586,11 @@ It exposes one function:
   `[YYYY-MM-DD HH:MM:SS] <event>: <message>\n` to `<workspace>/log.txt`
   (UTF-8). Any I/O failure is swallowed silently; logging must never break a
   workflow script.
+
+  For worker/verifier sessions in `Work - Do`, callers write one log line per
+  streamed output line using this same function (for example message prefixes
+  like `[worker] ...` and `[verifier] ...` are allowed). This is a mirror of
+  visible CLI output, not a protocol parser.
 
   Important side effect: this helper creates the workspace directory (and
   any missing parents) on first write so logging works for freshly-created
@@ -2958,6 +2989,10 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
      run one success path and one failure path through verifier-driven
      finalization and confirm both resulting task files contain an appended
      `Verification Output` section, with failures ending in `Work/Blocked/`.
+   - Output visibility check: in a scratch workspace, run one execution and
+     one verifier pass and confirm their stdout/stderr are visible live in CLI
+     and mirrored into `<workspace>/log.txt` under `work-do.execute` and
+     `work-do.verify`.
 8. End-to-end UTF-8: when the chosen natural language uses non-ASCII
    characters, run the dispatcher in `--dry-run` against the Installation
    Agent prompt and confirm the printed harness command, including the
