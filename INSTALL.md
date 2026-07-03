@@ -88,7 +88,7 @@ Concretely, when you finish scaffolding:
 4. All workflow paths required by the contracts are wired end to end:
    `Workspace - Create`, `Workspace - Remove` (archive), `Work - Do`,
   `Work - Move`, `Work - Undo`, runtime policy (`Policy`), dispatcher (`Agent`),
-  launcher gating via installation report artifact, and at least the
+  launcher gating via installation report presence, and at least the
   `Default` worker wrapper.
 
 You are done when the verification checklist in section 13 passes. The
@@ -1413,7 +1413,7 @@ the `Installation Agent` in section 8.2 step 1.
 - `README.md` - short overview of the workflow, the lifecycle, and how to
   launch.
 - `Open Agent.<launcher-ext>` - top-level launcher (see section 10). It stays
-  static and chooses top-level prompt by report artifact presence:
+  static and chooses top-level prompt by installation report presence:
   `Installation Report.md` absent -> `Installation Agent`, present ->
   `Workspace Agent`.
 - `Installation Report.md` - installation-complete artifact and summary report.
@@ -1423,7 +1423,7 @@ the `Installation Agent` in section 8.2 step 1.
 - `Prompts/Installation Agent.md` - prompt that drives an installation
   conversation similar to the one that produced this workflow. Tells the AI
   to verify worker wrappers, repositories, naming, optional framework
-  mapping, and finally to create the installation report artifact.
+  mapping, and finally to create the installation report.
   Platform-agnostic
   content.
 - `Prompts/Workspace Agent.md` - prompt that orchestrates workspace creation,
@@ -1523,8 +1523,8 @@ in any order:
 - A two-to-three-line overview of the agentic, workspace-based delivery
   model.
 - The launcher lifecycle (first run uses `Installation Agent`, subsequent
-  runs use `Workspace Agent`) and the fact that installation-report artifact
-  presence, not launcher rewrite, owns that top-level prompt selection.
+  runs use `Workspace Agent`) and the fact that installation report
+  presence, not launcher rewrite, controls top-level prompt selection.
 - A short `Installation report audit` section. The scaffolder writes an
   initial note that `Installation Report.md` is absent; the Installation Agent
   creates `Installation Report.md` with timestamped completion details after
@@ -1549,7 +1549,7 @@ Required content (concise):
 - installer summary of configured repositories/integrations,
 - a short checklist result line,
 - note that launcher prompt selection now resolves to `Workspace Agent`
-  because report artifact exists.
+  because the report exists.
 
 Launcher gating contract: top-level launcher chooses `Prompts/Workspace Agent.md`
 when this file exists; otherwise it chooses `Prompts/Installation Agent.md`.
@@ -1722,7 +1722,7 @@ Guidance:
      expressed by editing existing files within the manifest, decline
      and explain the constraint; capture the request as a follow-up
      entry in `Workspaces/__template__/Backlog.md` instead.
-  7. **Verify installation.** Before creating the installation report artifact, run a
+  7. **Verify installation.** Before creating the installation report, run a
      self-check and fix anything that fails. Do not ask the user to do
      this; do it and report results. Tell the user what was checked and
      whether it passed, without turning the summary into a low-level dump.
@@ -1756,11 +1756,11 @@ Guidance:
        same two translated bootstrap sentences as `Scripts/Workers/Default`
        (section 4.2). Any drift in those sentence literals is repaired
        before proceeding.
-     - Dispatcher smoke test before the active-prompt switch: invoke
+    - Dispatcher smoke test before creating the installation report: invoke
        `Scripts/Agent.<ext>` with
        `--worker Default --prompt <abs Installation Agent path> --mode cli
        --dry-run` and confirm it prints a harness command without error.
-     - Top-level launcher (before the active-prompt switch in step 8) still parses
+    - Top-level launcher (before step 8) still parses
        and targets the dispatcher with valid arguments per section 10.
        On Windows with Python launchers, confirm that `Open Agent.cmd`
        resolves Python in this order: `py` on `PATH`, then `python` on
@@ -1776,14 +1776,14 @@ Guidance:
      If any check fails, repair the offending artifact and re-run the
      affected check. Only proceed to step 8 once all checks pass.
 
-    8. **Create installation report artifact.** Ask one yes/no confirmation
+    8. **Create installation report.** Ask one yes/no confirmation
       before creating `Installation Report.md`. If the user confirms, verify
       `Workspace Agent.md` exists, then create `Installation Report.md`
       (section 4.12) with concise completion details. Do not rewrite the
       top-level `Open Agent` launcher. After creation, re-run the dispatcher
       smoke test against `Workspace Agent.md` to confirm launcher-gated
       resolution still yields a valid harness command. Append a timestamped
-      entry to README's installation-report audit section.
+      entry to README's installation report audit section.
 
   9. **Offer to open Workspace Agent in a new window.** Immediately
      before emitting the final completion message in step 10, ask the
@@ -1793,7 +1793,7 @@ Guidance:
      session (that would reuse this session's context and is not what
      the user wants). Instead, open the top-level `Open Agent`
      launcher in a new OS-level window so it spawns a fresh harness
-    process now gated to `Workspace Agent` by report artifact presence.
+    process now gated to `Workspace Agent` by installation report presence.
     Concretely:
      - Windows: `Start-Process -FilePath "<abs path to Open Agent.cmd>"`
        (or `cmd /c start "" "<abs path>"`); the `.cmd` launcher resolves
@@ -3043,7 +3043,7 @@ Notes:
   `go run "<abs path to Scripts/Agent.go>" ...`.
 - Top-level `Open Agent.cmd` checks `Installation Report.md` presence and
   selects prompt accordingly. The launcher file is static; installation state
-  changes by creating/removing report artifact, not by rewriting launcher.
+  changes by creating/removing the report, not by rewriting launcher.
 - In the sample containment check, `%PROMPTS_ROOT%` includes a trailing
   backslash so the prefix test remains folder-exact (`Prompts\\...`, not
   similarly prefixed siblings).
@@ -3142,7 +3142,7 @@ Mark the file executable. Do not create any additional launcher or wrapper
 files on Linux unless they are explicitly listed in the effective manifest
 (section 5.2 + section 7).
 
-### 10.4 Installation report artifact after installation
+### 10.4 Installation report after installation
 
 At the end of installation, do not regenerate or edit the top-level launcher.
 Instead, create `Installation Report.md` so report-presence gating resolves to
@@ -3297,13 +3297,13 @@ pre-existing user repositories, pre-existing workspaces, or unknown paths.
    `python` on `PATH`, then `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`,
   and that it invokes the dispatcher without hardcoding a user-profile
   absolute path. Verify the top-level launcher is static, reads
-  report artifact state from `Installation Report.md`, selects the correct
+  report state from `Installation Report.md`, selects the correct
   top-level prompt, and rejects selected prompt paths outside the workflow
   root `Prompts/` directory.
   Verify it does not hardcode either `Installation Agent.md` or
   `Workspace Agent.md` as its permanent prompt target. Verify
   scaffolded state has no `Installation Report.md` and `README.md` contains the
-  initial installation-report audit entry.
+  initial installation report audit entry.
 5. `Work - Move` transition matrix check: in a scratch workspace create
    synthetic task files and verify each allowed transition from section
    4.5a succeeds, each disallowed transition fails, `Current/` singleton
@@ -3550,7 +3550,7 @@ Protocol:
 
 3. **Simulate installation completion.** Create `Installation Report.md` at
   workflow root, exactly the operation described in section 10.4. Verify the
-  static launcher parses and resolves `Workspace Agent` via report artifact
+  static launcher parses and resolves `Workspace Agent` via installation report
   gating.
 
 4. **Create a workspace.** Invoke
@@ -3632,7 +3632,7 @@ Protocol:
      `RehearsalC/`) are gone from `Workspaces/__template__/`,
    - `__archive__/` is empty,
    - `Installation Report.md` is absent again,
-   - the top-level launcher is unchanged and still uses report artifact
+   - the top-level launcher is unchanged and still uses installation report
      gating,
    - no `rehearsal-smoke` workspace remains.
    After restoration, delete the snapshot directory.
