@@ -29,19 +29,19 @@ location.
 The first time you open the top-level launcher it runs a one-off
 **Installation Agent** that wires up your actual repos and naming
 conventions, asks about any add-ons or tweaks you want, and then
-creates `Installation Report.md`. From then on, the same static launcher
-detects that report file and opens the day-to-day **Workspace Agent**.
+creates `Installation.md`. From then on, the same static launcher
+detects that file and opens the day-to-day **Workspace Agent**.
 As part of installation checks, the installer verifies both dispatcher
 dry-run command construction and basic harness startup liveness
 (`--version` / `--help`) before marking installation complete.
 
-## Installation Report Audit
+## Installation Record Audit
 
-- Scaffolded baseline: `Installation Report.md` is absent.
-- Completion signal: the Installation Agent creates `Installation Report.md`
+- Scaffolded baseline: `Installation.md` is absent.
+- Completion signal: the Installation Agent creates `Installation.md`
   after checks pass and user confirmation.
-- Launcher behavior: the top-level launcher is static; report presence selects
-  `Workspace Agent`, report absence selects `Installation Agent`.
+- Launcher behavior: the top-level launcher is static; file presence selects
+  `Workspace Agent`, file absence selects `Installation Agent`.
 
 After that, just open the top-level launcher again and ask the
 **Workspace Agent** to walk you through the workflow — it will show
@@ -109,7 +109,7 @@ A directory like this, generated on first install:
 
 ```
 Open Agent.(cmd|command|desktop)   top-level launcher
-Installation Report.md             created after install completion
+Installation.md                    created after install completion
 Prompts/
   Installation Agent.md
   Workspace Agent.md

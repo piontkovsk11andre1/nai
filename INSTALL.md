@@ -1,4 +1,4 @@
-# Workflow Installer Prompt
+﻿# Workflow Installer Prompt
 
 You are an AI installer. Your job is to recreate a complete agentic workflow
 from scratch, adapted to the user's choice of natural language, operating
@@ -78,7 +78,7 @@ Concretely, when you finish scaffolding:
 
 1. A single top-level launcher (script, command, or desktop entry)
   exists and is configured to select top-level prompt by filesystem artifact:
-  if `Installation Report.md` exists at workflow root, open
+  if `Installation.md` exists at workflow root, open
   `Workspace Agent`; otherwise open `Installation Agent`. This is the state
   you leave behind.
 2. A `Workspaces/__template__` directory exists with all per-workspace
@@ -88,7 +88,7 @@ Concretely, when you finish scaffolding:
 4. All workflow paths required by the contracts are wired end to end:
    `Workspace - Create`, `Workspace - Remove` (archive), `Work - Do`,
   `Work - Move`, `Work - Undo`, runtime policy (`Policy`), dispatcher (`Dispatcher`),
-  launcher gating via installation report presence, and at least the
+  launcher gating via Installation marker presence, and at least the
   `Default` worker wrapper.
 
 You are done when the verification checklist in section 13 passes. The
@@ -1045,15 +1045,15 @@ The Research Agent prompt must instruct the agent to:
 - `Facts.md` is treated as a normal workspace artifact for dispatcher
   `--context-file` selection when present.
 
-### 4.12 Installation report gating after installation
+### 4.12 Installation marker gating after installation
 
 Gating is performed by the `Installation Agent` (the prompt described in
 section 8.2), not by the scaffolder running this document. As the scaffolder,
-you must leave `Installation Report.md` absent and leave the top-level
+you must leave `Installation.md` absent and leave the top-level
 launcher static.
 
 When the end user later runs the `Installation Agent` and completes its
-checklist, that agent creates `Installation Report.md` at workflow root.
+checklist, that agent creates `Installation.md` at workflow root.
 Presence of this file makes the static top-level launcher open
 `Workspace Agent`; absence makes it open `Installation Agent`. The launcher
 file name and launcher content stay the same.
@@ -1098,6 +1098,14 @@ Applies to the same five per-workspace prompts listed in section 4.13:
 Shared rules for `--mode tui`:
 
 - In-chat role switching follows section 4.14 exactly.
+- Disambiguation is strict:
+  - messages that start with or contain explicit switch commands
+    (`switch to <role>`, `become <role>`) are treated as in-chat
+    same-session role switches;
+  - do not reinterpret those commands as launcher-open requests;
+  - launcher-based opening is used only when the user explicitly asks
+    to `open`/`launch` (or equivalent wording), asks for a `new window`,
+    or names a different workspace.
 - When the user asks to open a separate window or names a different
   workspace, do not use in-chat switching. Use launcher-based opening
   with the exact mapping and path rules from section 8.3.
@@ -1159,6 +1167,9 @@ Required behavior when one of these agents is running in `--mode tui`:
   - If one message contains exactly one valid role switch and additional
     task instructions, switch first, then handle the remaining
     instruction text under the target role.
+  - If one message contains both switch phrasing and open/launch phrasing,
+    prefer in-chat switch unless the user explicitly says `new window`,
+    `separate window`, or names a different workspace.
   - If one message contains more than one different switch target,
     ask one clarification question and do not switch until resolved.
   - If the user explicitly asks to open a separate window or names a
@@ -1277,7 +1288,7 @@ Canonical names (English defaults):
 INSTALL.md                                        (this file is consumed by the AI; do not regenerate it)
 README.md
 Open Agent                                        (top-level launcher; extension depends on OS)
-Installation Report.md                           (installation-complete artifact and report)
+Installation.md                           (installation-complete artifact and report)
 Prompts/
   Installation Agent.md
   Workspace Agent.md
@@ -1410,7 +1421,7 @@ Requirements regardless of language:
 ### 5.4 OS launcher mechanism
 
 Pick the recipe in section 10 that matches the chosen OS. The top-level
-launcher checks for `Installation Report.md` and invokes the dispatcher with
+launcher checks for `Installation.md` and invokes the dispatcher with
 either `Installation Agent` (report absent) or `Workspace Agent` (report
 present). Per-workspace launchers invoke the dispatcher with
 their fixed per-agent prompt path and worker.
@@ -1437,7 +1448,7 @@ Lifecycle:
 1. The user opens the top-level launcher. The first time, it opens an AI
    agent with the `Installation Agent` prompt. That agent runs the
   installation checklist (section 8.2) and, as its last step, creates
-  `Installation Report.md` so the same static launcher opens the
+  `Installation.md` so the same static launcher opens the
   `Workspace Agent` prompt.
 2. From the second launch onward, the same launcher opens the `Workspace
    Agent` prompt.
@@ -1475,17 +1486,17 @@ the `Installation Agent` in section 8.2 step 1.
 - `README.md` - short overview of the workflow, the lifecycle, and how to
   launch.
 - `Open Agent.<launcher-ext>` - top-level launcher (see section 10). It stays
-  static and chooses top-level prompt by installation report presence:
-  `Installation Report.md` absent -> `Installation Agent`, present ->
+  static and chooses top-level prompt by Installation marker presence:
+  `Installation.md` absent -> `Installation Agent`, present ->
   `Workspace Agent`.
-- `Installation Report.md` - installation-complete artifact and summary report.
+- `Installation.md` - installation-complete artifact and summary report.
   It is absent in scaffolded state. The `Installation Agent` creates it at the
   end of successful installation after explicit user confirmation
   (section 4.12).
 - `Prompts/Installation Agent.md` - prompt that drives an installation
   conversation similar to the one that produced this workflow. Tells the AI
   to verify worker wrappers, repositories, naming, optional framework
-  mapping, and finally to create the installation report.
+  mapping, and finally to create the Installation marker.
   Platform-agnostic
   content.
 - `Prompts/Workspace Agent.md` - prompt that orchestrates workspace creation,
@@ -1585,11 +1596,11 @@ in any order:
 - A two-to-three-line overview of the agentic, workspace-based delivery
   model.
 - The launcher lifecycle (first run uses `Installation Agent`, subsequent
-  runs use `Workspace Agent`) and the fact that installation report
+  runs use `Workspace Agent`) and the fact that Installation marker
   presence, not launcher rewrite, controls top-level prompt selection.
-- A short `Installation report audit` section. The scaffolder writes an
-  initial note that `Installation Report.md` is absent; the Installation Agent
-  creates `Installation Report.md` with timestamped completion details after
+- A short `Installation marker audit` section. The scaffolder writes an
+  initial note that `Installation.md` is absent; the Installation Agent
+  creates `Installation.md` with timestamped completion details after
   user confirmation.
 - The dispatcher contract (the canonical flags of `Scripts/Dispatcher.<ext>`).
 - The work-queue directory set (`Next/`, `Current/`, `Blocked/`, `Done/`) and
@@ -1607,7 +1618,7 @@ in any order:
   workflow-root lock protection.
 - A bullet list of the scripts with a one-line purpose each.
 
-### 8.1a `Installation Report.md`
+### 8.1a `Installation.md`
 
 UTF-8 markdown report file at workflow root. It is absent immediately after
 scaffolding. The Installation Agent creates it only after installation checks
@@ -1640,7 +1651,7 @@ updates the affected files to match.
 
 Guidance:
 - Goal: prepare this distribution so the next launch opens `Workspace Agent`
-  instead of `Installation Agent` by creating `Installation Report.md` after the
+  instead of `Installation Agent` by creating `Installation.md` after the
   checklist passes.
 - Rules: keep the prompt platform-agnostic; one question at a time; do not
   reconfigure `Scripts/Workers/Default` (it is already wired by the
@@ -1648,7 +1659,7 @@ Guidance:
   concrete file updates and commands; explain what you are setting up, what
   happens next, and how the user will use the result; avoid low-level
   implementation detail unless it affects a real user decision; no remote
-  push. At startup, if `Installation Report.md` already exists and the
+  push. At startup, if `Installation.md` already exists and the
   template installation checks are complete, stop and
   tell the user installation is already complete; do not restart the strict
   installer interview unless the user explicitly asks to repair or rerun
@@ -1791,7 +1802,7 @@ Guidance:
      expressed by editing existing files within the manifest, decline
      and explain the constraint; capture the request as a follow-up
      entry in `Workspaces/__template__/Backlog.md` instead.
-  7. **Verify installation.** Before creating the installation report, run a
+  7. **Verify installation.** Before creating the Installation marker, run a
      self-check and fix anything that fails. Do not ask the user to do
      this; do it and report results. Tell the user what was checked and
      whether it passed, without turning the summary into a low-level dump.
@@ -1825,11 +1836,11 @@ Guidance:
        same two translated bootstrap sentences as `Scripts/Workers/Default`
        (section 4.2). Any drift in those sentence literals is repaired
        before proceeding.
-     - Dispatcher smoke test before creating the installation report: invoke
+     - Dispatcher smoke test before creating the Installation marker: invoke
        `Scripts/Dispatcher.<ext>` with
        `--worker Default --prompt <abs Installation Agent path> --mode cli
        --dry-run` and confirm it prints a harness command without error.
-    - Harness binary liveness check before creating the installation report:
+    - Harness binary liveness check before creating the Installation marker:
       run a no-token startup probe for the configured harness (`<binary>
       --version`, or `<binary> --help` when `--version` is unsupported) and
       confirm the process starts successfully.
@@ -1849,14 +1860,14 @@ Guidance:
      If any check fails, repair the offending artifact and re-run the
      affected check. Only proceed to step 8 once all checks pass.
 
-    8. **Create installation report.** Ask one yes/no confirmation
-      before creating `Installation Report.md`. If the user confirms, verify
-      `Workspace Agent.md` exists, then create `Installation Report.md`
+    8. **Create Installation marker.** Ask one yes/no confirmation
+      before creating `Installation.md`. If the user confirms, verify
+      `Workspace Agent.md` exists, then create `Installation.md`
       (section 4.12) with concise completion details. Do not rewrite the
       top-level `Open Agent` launcher. After creation, re-run the dispatcher
       smoke test against `Workspace Agent.md` to confirm launcher-gated
       resolution still yields a valid harness command. Append a timestamped
-      entry to README's installation report audit section.
+      entry to README's Installation marker audit section.
 
   9. **Offer to open Workspace Agent in a new window.** Immediately
      before emitting the final completion message in step 10, ask the
@@ -1866,7 +1877,7 @@ Guidance:
      session (that would reuse this session's context and is not what
      the user wants). Instead, open the top-level `Open Agent`
      launcher in a new OS-level window so it spawns a fresh harness
-    process now gated to `Workspace Agent` by installation report presence.
+    process now gated to `Workspace Agent` by Installation marker presence.
     Concretely:
      - Windows: `Start-Process -FilePath "<abs path to Open Agent.cmd>"`
        (or `cmd /c start "" "<abs path>"`); the `.cmd` launcher resolves
@@ -1891,7 +1902,7 @@ Guidance:
   `Workspaces/__template__/Workspace.md`; updated or stubbed
   `Workspaces/__template__/Framework.md` (with a backlog note when
   stubbed); updated `Workspaces/__template__/Prompts/Integration Agent.md`;
-  `Installation Report.md` created; any
+  `Installation.md` created; any
   integration-related edits from step 6 applied to the existing files
   named in that step (no new files or scripts outside the section 7
   manifest, interpreted through section 5.2, except optional wrappers
@@ -1906,6 +1917,25 @@ Headings: "Responsibilities", "Rules", "Notes".
 Guidance:
 - Responsibilities:
   - create a workspace via `Workspace - Create`,
+  - for workspace-creation requests, treat natural language as primary input
+    and translate it into valid `Workspace - Create` arguments without
+    unnecessary follow-up questions,
+  - derive both values explicitly for every create call:
+    - `--workspace` is a path-safe single segment under `Workspaces/`
+      (section 4.7 constraints still apply),
+    - `--branch` is the git branch to attach/create for template repos,
+  - deterministic mapping examples for user intent:
+    - "create workspace to work on issue 12312" -> workspace
+      `issue-12312`, branch `workspace/issue-12312`
+    - "create workspace to work on initial version" -> workspace
+      `initial-version`, branch `workspace/initial-version`
+    - "create workspace for branch feature/bla-bla-bla" -> workspace
+      `feature-bla-bla-bla`, branch `feature/bla-bla-bla`
+  - workspace slug normalization for derived `--workspace` values:
+    lowercase; spaces to hyphens; remove characters outside
+    `[a-z0-9-]`; collapse repeated hyphens; trim leading/trailing hyphens,
+  - if normalized workspace becomes empty or intent is genuinely ambiguous,
+    ask exactly one short clarification question; otherwise execute directly,
   - archive a workspace via `Workspace - Remove --synced`,
   - **preserve important facts/notes** on user request and before archival
     (see below),
@@ -1928,6 +1958,13 @@ Guidance:
     `Workspaces/<workspace>/<launcher-file>`. On Windows that means
     `Start-Process -FilePath "<absolute-launcher-path>"`. On other OSes
     invoke the launcher equivalently (see section 10).
+  - maintain installation-level change history in `Installation.md` at
+    workflow root:
+    - whenever naming conventions, template repository set, or
+      integration/tracker profile changes, append one short entry under an
+      "Installation-related changes" section with UTC timestamp,
+      change scope, and summary;
+    - keep this history append-only; do not rewrite prior entries.
   - **Preserve important facts/notes** procedure (on explicit user
     request, and offered before archival per below):
     1. Ask one question: what is important to preserve before archiving
@@ -1955,8 +1992,10 @@ Guidance:
     `Workspace - Remove --synced`. Never run preservation silently or
     without confirmation.
 - Rules:
-  - one question at a time, explicit confirmation for archive, no remote
-    push,
+  - one question at a time when clarification is needed; for clear
+    workspace-creation requests, derive values and execute without extra
+    confirmation,
+  - explicit confirmation for archive, no remote push,
   - resolve "open <agent>" requests against the currently discussed
     workspace unless the user names a different one,
   - do not run broad file searches for scripts or launchers; use
@@ -3096,7 +3135,7 @@ inspection):
 
 Pick the recipe that matches the chosen OS. Per-workspace launchers invoke the
 dispatcher with their fixed prompt path and worker. The top-level launcher is
-static and file-system gated: if `Installation Report.md` exists at workflow
+static and file-system gated: if `Installation.md` exists at workflow
 root, it invokes dispatcher with `Prompts/Workspace Agent.md`; otherwise it
 invokes dispatcher with `Prompts/Installation Agent.md`.
 
@@ -3114,7 +3153,7 @@ in section 10.1 before invoking the dispatcher.
 All top-level OS launcher recipes must enforce the same artifact-gating
 validation rules before invoking the dispatcher:
 
-- Resolve workflow-root report path `Installation Report.md`.
+- Resolve workflow-root report path `Installation.md`.
 - If the report exists, select `Prompts/Workspace Agent.md`; otherwise select
   `Prompts/Installation Agent.md`.
 - Resolve selected prompt to absolute path.
@@ -3122,7 +3161,7 @@ validation rules before invoking the dispatcher:
 - Reject when selected prompt path is outside workflow-root `Prompts/`
   directory.
 
-Per-workspace launchers do not read `Installation Report.md`; they pass their
+Per-workspace launchers do not read `Installation.md`; they pass their
 fixed per-agent prompt path and `--workspace .` directly.
 
 ### 10.1 Windows: `.cmd` launchers
@@ -3149,7 +3188,7 @@ if not defined PYTHON_CMD (
 )
 
 cd /d "%~dp0"
-if exist "Installation Report.md" (
+if exist "Installation.md" (
   set "PROMPT_PATH=%CD%\Prompts\Workspace Agent.md"
 ) else (
   set "PROMPT_PATH=%CD%\Prompts\Installation Agent.md"
@@ -3187,7 +3226,7 @@ Notes:
   language. For Go on Windows, resolve `go` via `where go`; if missing,
   emit a clear error and exit 127; when present, invoke
   `go run "<abs path to Scripts/Dispatcher.go>" ...`.
-- Top-level `Open Agent.cmd` checks `Installation Report.md` presence and
+- Top-level `Open Agent.cmd` checks `Installation.md` presence and
   selects prompt accordingly. The launcher file is static; installation state
   changes by creating/removing the report, not by rewriting launcher.
 - Avoid `findstr` for Windows path containment checks. In practice it can
@@ -3218,7 +3257,7 @@ Top-level launcher:
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-if [[ -f "Installation Report.md" ]]; then
+if [[ -f "Installation.md" ]]; then
   prompt_path="$(pwd)/Prompts/Workspace Agent.md"
 else
   prompt_path="$(pwd)/Prompts/Installation Agent.md"
@@ -3267,7 +3306,7 @@ Top-level launcher:
 [Desktop Entry]
 Type=Application
 Name=Open Agent
-Exec=sh -c 'if [ -f "$1/Installation Report.md" ]; then prompt_path="$1/Prompts/Workspace Agent.md"; else prompt_path="$1/Prompts/Installation Agent.md"; fi; if [ ! -f "$prompt_path" ]; then printf "%s\n" "Selected prompt not found: $prompt_path" >&2; exit 2; fi; case "$prompt_path" in "$1/Prompts/"*) ;; *) printf "%s\n" "Selected prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;; esac; exec <interpreter> "<abs path to Scripts/Dispatcher.<ext>>" --worker "Default" --prompt "$prompt_path" --mode tui --agent-name "Open Agent" --new-window' sh "<workflow root>"
+Exec=sh -c 'if [ -f "$1/Installation.md" ]; then prompt_path="$1/Prompts/Workspace Agent.md"; else prompt_path="$1/Prompts/Installation Agent.md"; fi; if [ ! -f "$prompt_path" ]; then printf "%s\n" "Selected prompt not found: $prompt_path" >&2; exit 2; fi; case "$prompt_path" in "$1/Prompts/"*) ;; *) printf "%s\n" "Selected prompt must be under Prompts/: $prompt_path" >&2; exit 2 ;; esac; exec <interpreter> "<abs path to Scripts/Dispatcher.<ext>>" --worker "Default" --prompt "$prompt_path" --mode tui --agent-name "Open Agent" --new-window' sh "<workflow root>"
 Path=<workflow root>
 Terminal=true
 ```
@@ -3293,17 +3332,17 @@ Mark the file executable. Do not create any additional launcher or wrapper
 files on Linux unless they are explicitly listed in the effective manifest
 (section 5.2 + section 7).
 
-### 10.4 Installation report after installation
+### 10.4 Installation marker after installation
 
 At the end of installation, do not regenerate or edit the top-level launcher.
-Instead, create `Installation Report.md` so report-presence gating resolves to
+Instead, create `Installation.md` so report-presence gating resolves to
 `Prompts/Workspace Agent.md`. The launcher file name and content stay
 identical. Keep dispatcher, worker, mode, and working-directory semantics
 unchanged.
 
-Before writing `Installation Report.md`, the Installation Agent must verify
+Before writing `Installation.md`, the Installation Agent must verify
 that `Prompts/Workspace Agent.md` exists and ask the user one yes/no
-confirmation. If the user declines, leave `Installation Report.md` absent and
+confirmation. If the user declines, leave `Installation.md` absent and
 report that installation is not complete. After writing the report, the
 Installation Agent must verify static launcher gating still resolves to a valid
 harness command (per section 8.2 step 7) before reporting installation
@@ -3464,7 +3503,7 @@ Verification execution order (compact anti-drift guard):
    `python` on `PATH`, then `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`,
   and that it invokes the dispatcher without hardcoding a user-profile
   absolute path. Verify the top-level launcher is static, reads
-  report state from `Installation Report.md`, selects the correct
+  report state from `Installation.md`, selects the correct
   top-level prompt, and rejects selected prompt paths outside the workflow
   root `Prompts/` directory.
   Validate the Windows containment gate with a workflow-root path that
@@ -3473,8 +3512,8 @@ Verification execution order (compact anti-drift guard):
   comparison (as defined in section 10.1), not `findstr` pattern matching.
   Verify it does not hardcode either `Installation Agent.md` or
   `Workspace Agent.md` as its permanent prompt target. Verify
-  scaffolded state has no `Installation Report.md` and `README.md` contains the
-  initial installation report audit entry.
+  scaffolded state has no `Installation.md` and `README.md` contains the
+  initial Installation marker audit entry.
 5. `Work - Move` transition matrix check: in a scratch workspace create
    synthetic task files and verify each allowed transition from section
    4.5a succeeds, each disallowed transition fails, `Current/` singleton
@@ -3704,7 +3743,7 @@ throwaway workspace and to roll the workflow root back to its
 post-scaffold state when finished. The rehearsal must leave **no
 artifacts** behind: no extra files, no extra git history in template
 repos, no extra entries in `__archive__/`, and no lasting change to
-`Installation Report.md` presence or the top-level launcher.
+`Installation.md` presence or the top-level launcher.
 
 Harness calls are stubbed throughout: every dispatcher invocation that
 would normally spawn the AI harness is made with `--mode cli --dry-run`,
@@ -3732,9 +3771,9 @@ Protocol:
    mirror anything the scaffolder ships (the scaffolder ships an empty
    template). No upstream is configured; everything stays local.
 
-3. **Simulate installation completion.** Create `Installation Report.md` at
+3. **Simulate installation completion.** Create `Installation.md` at
   workflow root, exactly the operation described in section 10.4. Verify the
-  static launcher parses and resolves `Workspace Agent` via installation report
+  static launcher parses and resolves `Workspace Agent` via Installation marker
   gating.
 
 4. **Create a workspace.** Invoke
@@ -3815,8 +3854,8 @@ Protocol:
    - the rehearsal repo directories (`RehearsalA/`, `RehearsalB/`,
      `RehearsalC/`) are gone from `Workspaces/__template__/`,
    - `__archive__/` is empty,
-   - `Installation Report.md` is absent again,
-   - the top-level launcher is unchanged and still uses installation report
+   - `Installation.md` is absent again,
+   - the top-level launcher is unchanged and still uses Installation marker
      gating,
    - no `rehearsal-smoke` workspace remains.
    After restoration, delete the snapshot directory.
@@ -3872,3 +3911,5 @@ anything to any remote. Stop.
   for safe rollback.
 - **Workspace branch** - the git branch name shared by all repositories of a
   workspace, used as the branch for every worktree.
+
+
