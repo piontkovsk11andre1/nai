@@ -2320,9 +2320,9 @@ path when provided; otherwise the wrapper's current working directory.
 
 ### 9.7 `Logger`
 
-A tiny shared utility imported by the workflow scripts (`Work - Do`,
-`Work - Undo`, `Workspace - Create`, `Workspace - Remove`). It exposes one
-function:
+A tiny shared utility imported by workflow scripts (for example `Work - Do`,
+`Work - Move`, `Work - Undo`, `Workspace - Create`, `Workspace - Remove`).
+It exposes one function:
 
 - `append_workspace_log(workspace, event, message)`: append a single line
   `[YYYY-MM-DD HH:MM:SS] <event>: <message>\n` to `<workspace>/log.txt`
