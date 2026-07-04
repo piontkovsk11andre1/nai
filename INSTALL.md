@@ -263,6 +263,10 @@ OS, or programming language. You may translate the prose and file names per
 the adaptation rules in section 5, but the behavior, argument names, separators,
 and metadata formats must match.
 
+For script implementation detail and edge-case mechanics, section 9 is the
+authoritative source. Section 4 states the invariant contract and references
+section 9 where detailed execution behavior is defined.
+
 ### 4.1 Dispatcher script (`Dispatcher`)
 
 A thin transport layer with this CLI:
@@ -297,7 +301,9 @@ Behavior:
   context-file flags entirely.
 - Run the worker subprocess with live stdio passthrough: worker stdout/stderr
   are visible in the dispatcher's CLI output as they are produced. The
-  dispatcher must not buffer/capture worker output for protocol parsing.
+  dispatcher must not parse worker output or reinterpret it as protocol.
+  Byte-for-byte streaming is required; simple tee-style mirroring by callers
+  for logging is allowed.
 - Forward the subprocess exit code as the dispatcher exit code.
 - Do no other interpretation. In particular, do not validate the workspace.
 - `--new-window` is forwarded verbatim to the worker; the dispatcher itself
@@ -348,12 +354,23 @@ Required runtime surface:
 - `Scripts/Workflow.<ext>` at workflow root is the canonical implementation
   entrypoint for workflow commands.
 - The existing named scripts remain part of the manifest and CLI contract
-  (`Dispatcher`, `Workspace - Create`, `Workspace - Remove`, `Work - Do`,
+  (`dispatch`, `Workspace - Create`, `Workspace - Remove`, `Work - Do`,
   `Work - Move`, `Work - Undo`) but may be implemented as thin delegates to
   `Scripts/Workflow.<ext>`.
 - Every workspace contains a local shim `Workflow.<ext>` at workspace root.
   This shim is the default entrypoint for agents, verifiers, and generated
   command examples that operate on that workspace.
+
+Canonical command mapping (single source for script entrypoint naming):
+
+| Workflow subcommand | Compatibility script file | Behavior section |
+| --- | --- | --- |
+| `dispatch` | `Scripts/Dispatcher.<ext>` | 9.1 |
+| `workspace-create` | `Scripts/Workspace - Create.<ext>` | 9.2 |
+| `workspace-remove` | `Scripts/Workspace - Remove.<ext>` | 9.3 |
+| `work-do` | `Scripts/Work - Do.<ext>` | 9.4 |
+| `work-move` | `Scripts/Work - Move.<ext>` | 9.5a |
+| `work-undo` | `Scripts/Work - Undo.<ext>` | 9.5 |
 
 Behavior:
 
@@ -419,12 +436,6 @@ through. Each wrapper:
 - The harness subprocess is started with its working directory set to the
   resolved `--workspace` path when provided, otherwise the wrapper's current
   working directory.
-- The user-facing sentences in the bootstrap ("Read the file at '...' and
-  follow the instructions exactly." and "After reading the files above,
-  the user asked you to do this:") are the two pieces of prose that must be
-  translated into the chosen language and used consistently across every
-  wrapper. Only those two sentences are translated; the embedded prompt
-  path and the user's tail text stay verbatim.
 
 ### 4.3 Work queue directories
 
@@ -606,7 +617,7 @@ Invoked non-interactively with these arguments:
   a workspace, i.e. contains the workspace document and `Work/`)
 - `--execution-worker <display-name>` (optional, default `Default`)
 - `--verification-worker <display-name>` (optional, default `Default`)
-- `--current-action restart|validate-only` (optional, default `restart`)
+- `--current-mode execute-verify|verify-only` (optional, default `execute-verify`)
 - `--mode cli|tui` (optional, default `cli`)
 - `--dry-run` (optional flag; read-only preview, no queue or repository
   mutation)
@@ -660,15 +671,15 @@ Decision order on each invocation:
 3. Execution and verification on the existing current task:
   - Build a tail string equal to the current task body (metadata
     frontmatter stripped).
-   - If `--current-action restart` (default; execute then verify), invoke the dispatcher with the
+   - If `--current-mode execute-verify` (default; execute then verify), invoke the dispatcher with the
      execution worker, the execute prompt (`Prompts/Work - Execute.md` inside
      the workspace), the workspace path, the mode, and the tail.
    - The execution call must stream output live to CLI and also append the
      same output lines to `<workspace>/log.txt` via `Logger` under
      `work-do.execute`.
-   - If `--current-action restart` and the dispatcher exits non-zero: print a
+   - If `--current-mode execute-verify` and the dispatcher exits non-zero: print a
      clear message that the task remains in `Current` and exit with that code.
-   - If `--current-action validate-only`, skip the execution dispatcher.
+   - If `--current-mode verify-only`, skip the execution dispatcher.
    - Use the canonical workspace scratch root `<workspace>/.tmp/workflow/`.
      Create a unique UTF-8 verification output file under that root (for
      example `<workspace>/.tmp/workflow/verify-<id>.txt`).
@@ -683,14 +694,8 @@ Decision order on each invocation:
      verifier-only and is enforced through `Work - Move` (section 4.5a). The
      token record is UTF-8 and contains at least: `token`, `task_file_name`,
      `created_utc`, optional `expires_utc`, and `verification_output_file`.
-    If `--verifier-timeout` is provided, token expiry is required. Compute
-    token TTL from `--finalization-token-ttl-seconds` when provided, otherwise
-    use `verifier-timeout + 300` seconds. When provided explicitly, token TTL
-    must be at least `verifier-timeout + 300` seconds; otherwise exit with
-    user/precondition error before verifier dispatch. When
-    `--verifier-timeout` is omitted, token expiry defaults to no expiration
-    unless `--finalization-token-ttl-seconds` is explicitly provided. There is
-    no maximum TTL cap.
+    Token-TTL and expiry rules are authoritative in section 9.4 and must be
+    implemented exactly as specified there.
      Invoke the dispatcher again with the verification worker and the verify
      prompt (`Prompts/Work - Verify.md` inside the workspace). The verifier
      tail is the current task body plus a short translated instruction naming
@@ -819,10 +824,10 @@ Behavior:
   - destination directory must not already contain a task with the same file
     name; on collision, exit with a precondition error before any content
     rewrite or filesystem mutation.
-4. Acquire the shared workspace lock from section 9.0 before re-checking
-  source/destination preconditions and before any content rewrite, append, or
-  rename operation. Under lock, re-validate that the resolved source task still
-  exists in source and destination constraints still hold.
+4. Acquire the shared workspace lock from section 9.0 before any content
+  rewrite, append, or rename operation. Under lock, re-validate source and
+  destination preconditions from steps 2-3 and confirm the resolved source task
+  still exists in source.
 5. Content transforms before move:
   - `next -> current`: capture fresh repo hashes (section 4.4) and
     write/replace rollback frontmatter with those captured values;
@@ -1319,7 +1324,7 @@ Protocol literals that are **not translated** under any circumstances
 - Facts schema marker literal in section 8.22:
   `Workflow Facts Schema: 1`.
 - Dispatcher / worker / `Work - *` CLI flag names (`--prompt`, `--mode`,
-  `--workspace`, `--from`, `--to`, `--current-action restart|validate-only`,
+  `--workspace`, `--from`, `--to`, `--current-mode execute-verify|verify-only`,
   etc.). Their
   *help text* is translated; the flag names and enum values stay
   ASCII.
@@ -1449,37 +1454,20 @@ Requirements regardless of language:
   interpolation).
 - File copy/move that preserves directory structure.
 - Read and write text files as UTF-8.
-- Force UTF-8 for every I/O boundary the script touches, not just file
-  reads/writes. The chosen natural language may contain non-ASCII
-  characters, and the default console/subprocess encodings on Windows
-  (cp1251, cp1252, cp866, etc.) will corrupt them otherwise. Concretely:
-  - process stdout/stderr must emit UTF-8 (Python: reconfigure
-    `sys.stdout`/`sys.stderr` with `encoding="utf-8"`, or set
-    `PYTHONIOENCODING=utf-8`; Node.js: `process.stdout.setDefaultEncoding`
-    is not enough on Windows, prefer writing buffers; Bash: ensure the
-    locale is UTF-8);
-  - subprocess captures must decode as UTF-8 (Python: pass
-    `encoding="utf-8"` together with `text=True` to `subprocess.run`/
-    `Popen`; never rely on the platform default);
-  - subprocess invocations that forward our translated strings (the
-    bootstrap from section 4.2, the `--tail` value, printed messages) must
-    pass through unchanged; set `PYTHONIOENCODING=utf-8` (or the
-    equivalent) in the child environment when spawning interpreters of the
-    same language so the chain stays UTF-8 end to end;
-  - log files written by `Logger` (section 9.7) are opened in UTF-8
-    explicitly;
-  - **Windows console code page.** On Windows, the console code page
-    (not `PYTHONIOENCODING`) is what every non-Python child inherits,
-    including the AI harness and any shell it spawns (PowerShell, cmd).
-    The default is cp1252 / cp866 / cp1251 depending on the system
-    locale, which corrupts UTF-8 bytes coming from upstream and from
-    downstream tool calls (typical symptom: harness output shows `?`
-    characters instead of accented letters). Every script that spawns a
-    subprocess on Windows -- at minimum the dispatcher
-    (`Scripts/Dispatcher.<ext>`) and every worker wrapper under
-    `Scripts/Workers/` -- must set both the input and output console
-    code pages to 65001 (UTF-8) at startup, before any subprocess is
-    launched. In Python this is:
+- Force UTF-8 for every I/O boundary the script touches, not only file
+  reads/writes. Required checklist:
+  - process stdout/stderr emit UTF-8;
+  - subprocess captures decode as UTF-8 (never platform default);
+  - forwarded translated strings (bootstrap/tail/messages) pass through
+    unchanged end-to-end;
+  - `Logger` output files are opened as UTF-8.
+- **Windows console code page is mandatory.** Any script that spawns
+  subprocesses on Windows (at minimum `Scripts/Dispatcher.<ext>` and every
+  `Scripts/Workers/*.<ext>`) must set both console code pages to 65001 before
+  launching children. This is in addition to `PYTHONIOENCODING` (or equivalent),
+  not a replacement.
+
+  Python example:
 
     ```python
     if os.name == "nt":
@@ -1489,34 +1477,29 @@ Requirements regardless of language:
         k32.SetConsoleOutputCP(65001)
     ```
 
-    Use the idiomatic equivalent for the chosen programming language.
-    If the chosen language cannot do this without third-party
-    dependencies, recommend Python instead of adding extra packages.
-    This is in addition to, not a replacement for, the Python-side
-    `PYTHONIOENCODING` / `sys.stdout.reconfigure` settings above.
-  Pick the idiomatic enforcement for the chosen language and apply it in
-  every script the scaffolder produces.
+- Use the idiomatic equivalent for the chosen language.
+- If the chosen language cannot satisfy these requirements without third-party
+  dependencies, recommend Python instead of adding packages.
+- Apply the same UTF-8 enforcement consistently across all generated scripts.
 
 ### 5.4 OS launcher mechanism
 
-Pick the recipe in section 10 that matches the chosen OS. The top-level
-launcher checks for `Installation.md` and invokes the canonical workflow
-runtime with `dispatch`, selecting either `Installation Agent` (report
-absent) or `Workspace Agent` (report present). Per-workspace launchers invoke
-the workspace-local `Workflow.<ext>` shim with their fixed per-agent prompt
-path and worker.
-On Windows, launchers must be plain-text `.cmd` files, not `.lnk`
-shortcuts. For Python-based distributions, the launcher must resolve
-Python in this exact order: `py` on `PATH`, then `python` on `PATH`, then
-`%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`. The launcher must not
-hardcode a user-profile absolute path to Python, and it must preserve the
-agent invocation arguments and working-directory semantics from section
-10.1.
-For user-facing command examples and prompt-internal script invocations on
-Windows, Python scripts must be invoked via an explicit interpreter command
-(`py "<path-to-script>.py"` preferred; `python "<path-to-script>.py"` as
-fallback). Do not invoke `.py` files directly by path, because file
-associations may open an editor instead of executing the script.
+Pick the section 10 launcher recipe that matches the chosen OS.
+
+- Top-level launcher behavior: check `Installation.md`, then invoke the
+  canonical workflow runtime with `dispatch` and select `Installation Agent`
+  (marker absent) or `Workspace Agent` (marker present).
+- Per-workspace launcher behavior: invoke the workspace-local
+  `Workflow.<ext>` shim with its fixed per-agent prompt path and worker.
+- Windows launcher format: plain-text `.cmd` only (never `.lnk`).
+- Windows Python resolution order (exact): `py` on `PATH`, then `python` on
+  `PATH`, then `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`.
+- Windows path safety: launchers must not hardcode user-profile absolute
+  Python paths and must preserve section 10.1 arguments and working-directory
+  semantics.
+- Windows invocation rule in examples/prompts: invoke Python scripts through
+  an explicit interpreter (`py "<path-to-script>.py"` preferred, `python ...`
+  fallback). Do not invoke `.py` files directly by path.
 
 ### 5.5 Harness invocation
 
@@ -1761,8 +1744,8 @@ Guidance:
   template installation checks are complete, stop and
   tell the user installation is already complete; do not restart the strict
   installer interview unless the user explicitly asks to repair or rerun
-  installation. Before changing workflow-control artifacts (`Installation
-  Report.md`, files under `Scripts/`, files under `Scripts/Workers/`, or the
+  installation. Before changing workflow-control artifacts (`Installation.md`,
+  files under `Scripts/`, files under `Scripts/Workers/`, or the
   top-level launcher), describe the exact intended change and ask one yes/no
   confirmation. The only expected script change in normal installation is
   adding optional extra worker wrappers; `Scripts/Workers/Default` and the
@@ -2642,6 +2625,16 @@ inside queue files.
 For each script: argument list, behavior, exit codes, side effects. Translate
 to the chosen programming language. Use plain standard-library code.
 
+Shared script exit-code profile (authoritative table):
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `2` | User/precondition/policy error |
+| `3` | Verification failed (used by `Work - Do` failure outcomes) |
+| `127` | Required binary missing (`git` or harness/interpreter binary) |
+| other non-zero | Propagated child/worker/dispatcher exit code when specified |
+
 ### 9.0 `Policy`
 
 `Policy` is a shared utility imported by mutating workflow scripts. It is not
@@ -2801,7 +2794,8 @@ Required rules:
   - `work-undo` -> `Work - Undo` behavior from section 9.5.
 - The root runtime may implement these commands directly or delegate to the
   existing named scripts, but public behavior must remain identical to the
-  referenced sections.
+  referenced sections. Delegated calls must use the shared interpreter
+  resolver from section 9.0b.
 - `Workspaces/<name>/Workflow.<ext>` is a workspace-local shim. It must not
   search broadly for `Scripts/`; it resolves the authoritative workflow root
   from scaffolded data and validates it before dispatch.
@@ -2820,6 +2814,37 @@ Required rules:
   message naming the shim path, the expected root runtime path, and the exact
   next action.
 
+### 9.0b Shared interpreter and script-entry resolution
+
+All script-to-script invocations must use one shared interpreter-resolution
+helper so launcher behavior, dispatcher behavior, root-runtime delegation, and
+generated command examples stay consistent.
+
+Required helper:
+
+- `resolve_script_interpreter(runtime_kind, workflow_root)` -> argv prefix.
+
+Required behavior:
+
+- For Python on Windows, resolve in this exact order:
+  1. `py` on `PATH`
+  2. `python` on `PATH`
+  3. `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`
+  Else exit 127 with a clear message naming attempted locations.
+- For Python on macOS/Linux, resolve `python3` then `python`; else exit 127.
+- For Bash/Node.js/Go, resolve the canonical runtime binary on `PATH`; else
+  exit 127 with clear recovery.
+- Return an argv prefix (for example `["py"]`, `["python3"]`, `["node"]`,
+  or `["go", "run"]`) that callers concatenate with script path and args
+  without shell interpolation.
+
+Mandatory callers:
+
+- Launchers in section 10.
+- `Dispatcher` worker-script invocation in section 9.1.
+- Root `Workflow` runtime when delegating to compatibility scripts.
+- `Work - Do` when emitting ready-to-run verifier finalization command lines.
+
 ### 9.1 Dispatcher (`Dispatcher`)
 
 Inputs: as in section 4.1.
@@ -2837,7 +2862,8 @@ def main():
     except invalid:
         print_error(...)
         return 2
-    cmd = [interpreter, worker_path,
+    interp = resolve_script_interpreter(...)
+    cmd = interp + [worker_path,
            "--prompt", absolute(args.prompt),
            "--mode", args.mode]
     if args.workspace: cmd += ["--workspace", absolute(args.workspace)]
@@ -2854,9 +2880,10 @@ def main():
   If the prompt exists but is unreadable or not valid UTF-8, exit 2 with a clear
   message. This fails before any harness process is started.
 
-  The dispatcher runs worker processes in passthrough mode: no stdout/stderr
-  capture for parsing, no buffering requirements beyond the runtime default,
-  and no mutation of worker output text.
+  The dispatcher runs worker processes in passthrough mode for protocol
+  semantics: no stdout/stderr parsing and no output-token interpretation. A
+  caller may tee the same live stream line-for-line into logging while
+  preserving visible output ordering.
 
   Exit codes: 0 success, 2 user error (bad prompt, unreadable prompt, invalid
   UTF-8 prompt, or bad worker), worker's own exit code otherwise.
@@ -3148,11 +3175,13 @@ Behavior:
 def main():
   args = parse()
   ws = resolve_workspace(args.workspace)
-  lock = acquire_workspace_lock(ws, role="work-move-script",
-                                force_unlock=args.force_unlock)
   validate_transition(args.from_state, args.to_state)
   task = resolve_source_task(ws, args.from_state, args.task)
   ensure_destination_constraints(ws, args.to_state)
+
+  lock = acquire_workspace_lock(ws, role="work-move-script",
+                                force_unlock=args.force_unlock)
+  revalidate_source_and_destination_under_lock(ws, args, task)
 
   text = read_utf8(task)
   if args.from_state == "next" and args.to_state == "current":
@@ -3183,6 +3212,9 @@ Exit codes: 0 success, 2 user/precondition error.
 
 Additional requirements:
 
+- `revalidate_source_and_destination_under_lock(...)` repeats source-task
+  existence and destination constraints after lock acquisition, before any
+  content mutation.
 - `resolve_source_task` validates canonical task naming from section 4.3
   for every candidate considered in source queues.
 - `Work - Move` validates task frontmatter schema per section 4.3a for source
@@ -3208,8 +3240,8 @@ Additional requirements:
   atomic as specified in section 4.5a; attempt the destination-directory
   atomic rename directly and, if it fails due to unsupported semantics, exit 2
   with no queue mutation.
-- `Work - Move` acquires the workspace lock before queue validation and
-  mutation and releases it on every exit path.
+- `Work - Move` acquires the workspace lock before lock-scoped re-validation
+  and mutation, and releases it on every exit path.
 - Add `--force-unlock` (optional flag) so lock recovery is explicit when a
   stale lock must be cleared manually.
 - `assert_finalization_token_if_active` validates against the active token
@@ -3233,13 +3265,13 @@ From workflow root (current directory contains `Scripts/` and `Workspaces/`):
 - Finalize verification success and append verifier output:
 
   ```
-  <interpreter> "Scripts/Workflow.<ext>" work-move --workspace Workspaces/my-ws --from current --to done --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
+  <interpreter> "Scripts/Workflow.<ext>" work-move --workspace Workspaces/my-ws --from current --to done --verification-output-file Workspaces/my-ws/.tmp/workflow/verify-<id>.txt --finalization-token <token>
   ```
 
 - Finalize verification failure with explicit reason:
 
   ```
-  <interpreter> "Scripts/Workflow.<ext>" work-move --workspace Workspaces/my-ws --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
+  <interpreter> "Scripts/Workflow.<ext>" work-move --workspace Workspaces/my-ws --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file Workspaces/my-ws/.tmp/workflow/verify-<id>.txt --finalization-token <token>
   ```
 
 - Reopen completed task:
@@ -3259,13 +3291,13 @@ From inside the workspace directory (`Workspaces/my-ws/`):
 - Finalize verification success and append verifier output:
 
   ```
-  <interpreter> "Workflow.<ext>" work-move --from current --to done --verification-output-file .tmp/workflow/verify.txt --finalization-token <token>
+  <interpreter> "Workflow.<ext>" work-move --from current --to done --verification-output-file .tmp/workflow/verify-<id>.txt --finalization-token <token>
   ```
 
 - Finalize verification failure with explicit reason:
 
   ```
-  <interpreter> "Workflow.<ext>" work-move --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file .tmp/workflow/verify.txt --finalization-token <token>
+  <interpreter> "Workflow.<ext>" work-move --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file .tmp/workflow/verify-<id>.txt --finalization-token <token>
   ```
 
 - Reopen completed task:
@@ -3390,9 +3422,8 @@ the canonical root runtime with `Prompts/Workspace Agent.md`; otherwise it
 invokes it with `Prompts/Installation Agent.md`.
 
 The canonical runtime is invoked with the project's interpreter for the chosen
-programming language (for example: `py` on Windows for Python, `python3` on
-macOS/Linux, `bash` for shell scripts, `node` for Node.js). For Go-based
-distributions, launcher commands must invoke the runtime as
+programming language using the shared resolver from section 9.0b. For
+Go-based distributions, launcher commands must invoke the runtime as
 `go run "<abs path to Scripts/Workflow.go>"` (or an explicitly generated
 `Workflow`/`Workflow.exe` binary with equivalent arguments and behavior). On
 Windows, the launcher is a `.cmd` file that resolves the interpreter as
@@ -3419,7 +3450,7 @@ workspace-local shim with their fixed per-agent prompt path and
 
 Create plain-text `.cmd` launchers. For Python-based distributions, each
 launcher must resolve Python in this exact order before invoking the
-dispatcher: `py` on `PATH`, then `python` on `PATH`, then
+canonical runtime: `py` on `PATH`, then `python` on `PATH`, then
 `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`.
 
 Top-level and per-workspace launchers follow section 10.0 for report-gating
@@ -3878,8 +3909,9 @@ Verification execution order (compact anti-drift guard):
   `Workflow Facts Schema: 1` and that relaxed handling rules are documented
   (missing/unknown marker does not block queue scripts).
 
-10. `Work - Do` validates `Current/` as a singleton queue before restart or
-  `validate-only` handling. Create a scratch workspace with two canonical task files
+10. `Work - Do` validates `Current/` as a singleton queue before
+  `execute-verify` or `verify-only` handling. Create a scratch workspace with
+  two canonical task files
   in `Work/Current/` and confirm `Work - Do` exits non-zero with a clear
   precondition error before invoking any dispatcher.
 
@@ -3958,7 +3990,7 @@ Verification execution order (compact anti-drift guard):
     present;
   - dispatcher / worker / `Work - *` CLI flag names and enum values remain
     ASCII and exact (for example `--prompt`, `--mode`, `--from`, `--to`,
-    `--current-action`, `restart`, `validate-only`);
+    `--current-mode`, `execute-verify`, `verify-only`);
   - logger event identifiers from section 9.7 remain exact tokens
     (`work-do.start`, `workspace-archive.done`, etc.).
 
@@ -4054,8 +4086,8 @@ Protocol:
      workflow root deterministically.
 
 4. **Create a workspace.** Invoke
-   `Scripts/Workspace - Create --workspace rehearsal-smoke --branch
-   workspace/rehearsal-smoke`. Assert:
+  `Scripts/Workflow.<ext> workspace-create --workspace rehearsal-smoke --branch
+  workspace/rehearsal-smoke`. Assert:
    - the workspace directory exists under `Workspaces/rehearsal-smoke/`,
    - the three rehearsal repos are attached as worktrees on the requested branch,
    - the five per-agent launchers exist and parse,
@@ -4065,9 +4097,9 @@ Protocol:
 5. **Queue a synthetic task, promote it, and run `Work - Do`.** Write a single task file
    `Workspaces/rehearsal-smoke/Work/Next/w-0001. Rehearsal task.md`
    (something trivial, e.g. "touch a file in RehearsalA/"). Promote it with
-  `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from next --to current --task "w-0001. Rehearsal task.md"`.
+  `Scripts/Workflow.<ext> work-move --workspace Workspaces/rehearsal-smoke --from next --to current --task "w-0001. Rehearsal task.md"`.
   Then invoke
-  `Scripts/Work - Do --workspace Workspaces/rehearsal-smoke --mode cli
+  `Scripts/Workflow.<ext> work-do --workspace Workspaces/rehearsal-smoke --mode cli
   --rehearse`. Assert:
    - `Work/Current/` contains the task file with valid rollback frontmatter
      (section 4.4) carrying real commit hashes from the three rehearsal repos,
@@ -4077,34 +4109,34 @@ Protocol:
 
    Additional simulated finalization assertions (still no real harness calls):
    - Simulate verifier success by invoking
-     `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to done --verification-output-file <tmp-success-output.txt>`
+     `Scripts/Workflow.<ext> work-move --workspace Workspaces/rehearsal-smoke --from current --to done --verification-output-file <tmp-success-output.txt>`
      and assert the task moves to `Work/Done/` with an appended
      `Verification Output` section.
    - Move the task back to `Work/Current/` via
      `Work - Move --from done --to next` then
      `Work - Move --from next --to current`.
    - Simulate verifier failure by invoking
-     `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to blocked --reason-kind FAIL --reason "Rehearsal simulated verifier failure" --verification-output-file <tmp-failure-output.txt>`
+     `Scripts/Workflow.<ext> work-move --workspace Workspaces/rehearsal-smoke --from current --to blocked --reason-kind FAIL --reason "Rehearsal simulated verifier failure" --verification-output-file <tmp-failure-output.txt>`
      and assert the task moves to `Work/Blocked/`, appends a
      `Verification Output` section, and adds blocked-reason frontmatter.
    - Invoke
-     `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from blocked --to done`
+     `Scripts/Workflow.<ext> work-move --workspace Workspaces/rehearsal-smoke --from blocked --to done`
      so the task is in `Work/Done/` for the explicit undo exercise below.
 
-6. **Exercise `--current-action validate-only`.** Move the task back to
+6. **Exercise `--current-mode verify-only`.** Move the task back to
   `Work/Current/` via `Work - Move --from done --to next` then
   `Work - Move --from next --to current`, then re-invoke `Work - Do` with
-  `--current-action validate-only --rehearse`. Assert the execute dispatcher is
+  `--current-mode verify-only --rehearse`. Assert the execute dispatcher is
   skipped, verifier dispatcher dry-run is invoked, and queue state remains
   unchanged.
 
 7. **Exercise `Work - Undo`.** Invoke
-   `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
+  `Scripts/Workflow.<ext> work-undo --workspace Workspaces/rehearsal-smoke --count
    1` and assert it refuses without `--force`. Then finalize the current task
   into done via
-  `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to done`
+  `Scripts/Workflow.<ext> work-move --workspace Workspaces/rehearsal-smoke --from current --to done`
   and invoke
-   `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
+  `Scripts/Workflow.<ext> work-undo --workspace Workspaces/rehearsal-smoke --count
    1 --force --snapshot-before-undo <tmp-undo-snapshot>`. Assert:
    - the task returned to `Work/Next/` without rollback frontmatter,
    - the undo snapshot exists and was created before destructive git commands,
@@ -4112,7 +4144,7 @@ Protocol:
      rollback frontmatter (preflight succeeded, reset worked).
 
 8. **Archive the workspace.** Invoke
-   `Scripts/Workspace - Remove --workspace rehearsal-smoke --synced`.
+  `Scripts/Workflow.<ext> workspace-remove --workspace rehearsal-smoke --synced`.
    Assert:
    - the workspace directory is gone,
    - the non-repo files landed under
