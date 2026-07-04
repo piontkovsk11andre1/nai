@@ -1445,6 +1445,11 @@ Python in this exact order: `py` on `PATH`, then `python` on `PATH`, then
 hardcode a user-profile absolute path to Python, and it must preserve the
 agent invocation arguments and working-directory semantics from section
 10.1.
+For user-facing command examples and prompt-internal script invocations on
+Windows, Python scripts must be invoked via an explicit interpreter command
+(`py "<path-to-script>.py"` preferred; `python "<path-to-script>.py"` as
+fallback). Do not invoke `.py` files directly by path, because file
+associations may open an editor instead of executing the script.
 
 ### 5.5 Harness invocation
 
@@ -1955,7 +1960,7 @@ Guidance:
     current-directory or `.` fallback,
   - archive confirmation and execution must both show the explicit workspace
     argument (for example:
-    `Scripts/Workspace - Remove --workspace feature-initial-commit --synced`),
+    `py "Scripts/Workspace - Remove.py" --workspace feature-initial-commit --synced`),
   - **preserve important facts/notes** on user request and before archival
     (see below),
   - open per-workspace agents by resolving the user's agent name to the
@@ -2025,6 +2030,9 @@ Guidance:
   - if the session starts inside a workspace folder, resolve the workflow
     root by walking upward to the directory that contains both `Scripts/`
     and `Workspaces/`, then use workflow-root-relative paths from there.
+  - On Windows, always run workflow Python scripts through an explicit
+    interpreter command (`py "<script>.py"` preferred) and quote paths that
+    contain spaces.
 - Notes: keep explanations user-facing: say what you are doing, what happens
   next, and how the user can continue. Per-workspace work happens inside
   workspace prompts and markdown files; the global backlog/changelog files
@@ -2336,6 +2344,8 @@ Guidance:
   occurs, explain the denied target and continue via an allowed file target
   or script path instead of asking for extra confirmation unless a
   destructive gate in this spec requires it.
+  On Windows, invoke Python workflow scripts via `py "<script>.py"` and never
+  by bare script path; this avoids editor file-association launches.
 
 ### 8.19 Template `Prompts/Reviewer Agent.md`
 
@@ -2903,7 +2913,8 @@ Verification outcome handling:
   verify that the active task was finalized by verifier through token-consistent
   `Work - Move`:
   - task in `Done/` -> success;
-  - task in `Blocked/` -> return 3;
+  - task in `Blocked/` -> print one short translated line stating that
+    verification failed and the task was moved to `Blocked/`, then return 3;
   - task still in `Current/` -> invalid finalization; attempt deterministic
     recovery via `Work - Move --from current --to blocked --reason-kind INVALID`
     with run token and verification output path. Return 3. If recovery fails,
@@ -3033,28 +3044,32 @@ Additional requirements:
 
 Canonical invocation examples (paths shown as relative for readability):
 
+For Python-based workflows on Windows, render these commands with explicit
+interpreter invocation (for example `py "Scripts/Work - Move.py" ...`) rather
+than bare `.py` paths.
+
 - Start next task:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from next --to current --task "w-0007. API retry policy.md"
+  <interpreter> "Scripts/Work - Move.<ext>" --workspace Workspaces/my-ws --from next --to current --task "w-0007. API retry policy.md"
   ```
 
 - Finalize verification success and append verifier output:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to done --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
+  <interpreter> "Scripts/Work - Move.<ext>" --workspace Workspaces/my-ws --from current --to done --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
   ```
 
 - Finalize verification failure with explicit reason:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
+  <interpreter> "Scripts/Work - Move.<ext>" --workspace Workspaces/my-ws --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
   ```
 
 - Reopen completed task:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from done --to next --task "w-0007. API retry policy.md"
+  <interpreter> "Scripts/Work - Move.<ext>" --workspace Workspaces/my-ws --from done --to next --task "w-0007. API retry policy.md"
   ```
 
 ### 9.6 `Workers/Default`
@@ -3398,8 +3413,11 @@ examples follow.
 
 ### 11.1 Opencode
 
-- CLI/unattended: `opencode run "<bootstrap>"`
-- TUI/interactive: `opencode --prompt "<bootstrap>"`
+- CLI/unattended: `opencode run --thinking "<bootstrap>"`
+- TUI/interactive: `opencode --thinking --prompt "<bootstrap>"`
+- Live-output requirement: wrappers that use opencode must enable
+  `--thinking` for both execute and verify flows so `Work - Do` streams
+  visible incremental model output in real time.
 - Context attach: during scaffolding, detect support for the attach flag by
   inspecting opencode help output (`opencode --help` and subcommand help as
   needed) and record the result in the generated wrapper. At runtime, only
@@ -3786,6 +3804,9 @@ so no tokens are spent and no model round-trips happen. `Work - Do`
 invocations in rehearsal use `--rehearse`; queue transitions are exercised
 explicitly through `Work - Move`. Real
 subprocess calls are limited to the workflow scripts themselves and to `git`.
+When the chosen scripting language is Python, invoke workflow scripts via an
+explicit interpreter in rehearsal steps (`py "<script>.py"` on Windows,
+`python3 "<script>.py"` on macOS/Linux) rather than by bare script path.
 
 Protocol:
 
