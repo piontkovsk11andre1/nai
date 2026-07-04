@@ -357,9 +357,9 @@ Required runtime surface:
   (`dispatch`, `Workspace - Create`, `Workspace - Remove`, `Work - Do`,
   `Work - Move`, `Work - Undo`) but may be implemented as thin delegates to
   `Scripts/Workflow.<ext>`.
-- Every workspace contains a local shim `Workflow.<ext>` at workspace root.
-  This shim is the default entrypoint for agents, verifiers, and generated
-  command examples that operate on that workspace.
+- Every workspace contains a local shim `Scripts/Workflow.<ext>` inside the
+  workspace. This shim is the default entrypoint for agents, verifiers, and
+  generated command examples that operate on that workspace.
 
 Canonical command mapping (single source for script entrypoint naming):
 
@@ -374,8 +374,9 @@ Canonical command mapping (single source for script entrypoint naming):
 
 Behavior:
 
-- `Workflow.<ext>` at workspace root embeds or otherwise deterministically
-  resolves the authoritative workflow root selected during scaffolding.
+- `Scripts/Workflow.<ext>` inside the workspace embeds or otherwise
+  deterministically resolves the authoritative workflow root selected during
+  scaffolding.
 - The workspace-local shim validates that the resolved workflow root exists
   and that `Scripts/Workflow.<ext>` exists under that root before dispatching.
 - The workspace-local shim forwards commands to `Scripts/Workflow.<ext>` using
@@ -387,7 +388,8 @@ Behavior:
   caller omitted it. This injection happens in deterministic runtime code, not
   in prompt prose.
 - Prompts, generated verifier finalization commands, and per-workspace
-  launchers must prefer the workspace-local `Workflow.<ext>` shim. Raw
+  launchers must prefer the workspace-local `Scripts/Workflow.<ext>` shim.
+  Raw
   `Scripts/...` and `../../Scripts/...` paths are compatibility surfaces for
   manual use and wrapper internals only.
 - Upward workflow-root discovery is a compatibility fallback inside runtime
@@ -748,9 +750,10 @@ Decision order on each invocation:
    - When `--dry-run` is set and `--rehearse` is not set, skip all mutation,
      verifier-output handling, and finalization checks. Print the dispatcher
      commands that would be invoked.
-   - When `--rehearse` is set, run the same flow but pass `--dry-run` to
-     dispatcher calls and skip post-verify finalization checks. `Work - Do`
-     does not mutate queue state in rehearse mode.
+    - When `--rehearse` is set, run the same flow but pass `--dry-run` to
+      dispatcher calls and skip post-verify finalization checks. `Work - Do`
+      does not mutate queue state in rehearse mode and must not leave behind an
+      active verifier-token record from that rehearse run.
    - Verification output files under workspace scratch (for example
      `.tmp/workflow/verify-<id>.txt`) and the verifier token JSON file are workflow
      scratch artifacts created by `Work - Do`. On a terminal reconciled
@@ -778,7 +781,7 @@ Invoked non-interactively with these arguments:
 - `--to next|current|blocked|done` (required)
 - `--task <file-name>` (optional; required unless `--from current` and
   exactly one file exists in `Work/Current/`)
-- `--reason-kind FAIL|INVALID|DISPATCHER` (optional; used when `--to blocked`)
+  - `--reason-kind FAIL|INVALID|DISPATCHER` (optional; required when `--to blocked`)
 - `--reason <text>` (optional; used when `--to blocked`)
 - `--verification-output-file <path>` (optional; UTF-8 text appended to the
   task as a verification section)
@@ -790,13 +793,13 @@ Locality and working-directory contract:
 
 - Workflow implementations are owned by workflow root `Scripts/`.
 - The canonical agent-facing entrypoint inside a workspace is the
-  workspace-local `Workflow.<ext>` shim at workspace root.
+  workspace-local `Scripts/Workflow.<ext>` shim.
 - If you launch from workflow root, you may call either the compatibility
   scripts under `Scripts/` or the canonical `Scripts/Workflow.<ext>`
   subcommands.
 - If you launch from a workspace directory (for example `Workspaces/my-ws/`),
   prompts, verifiers, and generated command examples must use
-  `Workflow.<ext>` at that workspace root rather than `../../Scripts/...`.
+  `Scripts/Workflow.<ext>` in that workspace rather than `../../Scripts/...`.
 - `--workspace` uses the same default as `Work - Do` (current directory when
   it looks like a workspace), but the workspace-local shim may inject the
   current workspace deterministically for workspace-scoped commands so AI
@@ -814,21 +817,26 @@ Allowed transitions are exactly:
 Behavior:
 
 1. Validate source/target transition. Reject anything outside the matrix.
-2. Resolve the task file in source:
+  2. Resolve the task file in source:
   - task file names must match canonical naming from section 4.3; if
     `--task` is provided, reject it when non-canonical;
   - if `--task` was provided, it must exist in source;
   - if omitted for `current`, source must contain exactly one task file.
-3. Enforce destination constraints:
+  3. Enforce destination constraints:
   - destination `current` must be empty.
   - destination directory must not already contain a task with the same file
     name; on collision, exit with a precondition error before any content
     rewrite or filesystem mutation.
-4. Acquire the shared workspace lock from section 9.0 before any content
-  rewrite, append, or rename operation. Under lock, re-validate source and
-  destination preconditions from steps 2-3 and confirm the resolved source task
-  still exists in source.
-5. Content transforms before move:
+  4. Additional preconditions:
+   - if `--to blocked`, require `--reason-kind` before any mutation;
+   - when the task file contains workflow metadata frontmatter, accept only
+     `workflow_schema: 1`; reject unknown or missing schema values with exit 2
+     before any rewrite or move.
+  5. Acquire the shared workspace lock from section 9.0 before any content
+   rewrite, append, or rename operation. Under lock, re-validate source and
+   destination preconditions from steps 2-3 and confirm the resolved source task
+   still exists in source.
+  6. Content transforms before move:
   - `next -> current`: capture fresh repo hashes (section 4.4) and
     write/replace rollback frontmatter with those captured values;
   - `current -> blocked`: add/update blocked-reason frontmatter field (section 4.4a)
@@ -847,7 +855,7 @@ Behavior:
     against the active token JSON record in workspace scratch: provided token
     equals `token`, source task equals `task_file_name`, and finalization time
     is not later than `expires_utc` when that field is present.
-6. If `--verification-output-file` is provided, read it as UTF-8 and append
+  7. If `--verification-output-file` is provided, read it as UTF-8 and append
   it to the task as a new section at EOF:
 
   ```
@@ -856,7 +864,7 @@ Behavior:
   <verbatim content>
   ```
 
-7. Move the task file using transactional local-filesystem semantics:
+  8. Move the task file using transactional local-filesystem semantics:
   - write transformed content to a temporary file in the destination
     directory (same filesystem as final target),
   - flush/fsync the temp file,
@@ -1004,7 +1012,7 @@ Behavior:
   worktree attach, submodule sync/update, validation, or launcher generation
   step fails, the script must remove the partially created workspace directory
   and exit non-zero with a clear error naming the failing step.
-7. Ensure the copied workspace-local `Workflow.<ext>` shim is present and
+7. Ensure the copied workspace-local `Scripts/Workflow.<ext>` shim is present and
   bound to the authoritative workflow root chosen during scaffolding. If the
   shim needs post-copy rewriting to embed that root or validate localized
   names, do it here before launcher generation.
@@ -1024,7 +1032,7 @@ Behavior:
   mapping table while preserving the same role pairing (`1` = Integration,
   `2` = Research, `3` = Planner, `4` = Worker, `5` = Reviewer).
 
-  Each launcher invokes the workspace-local `Workflow.<ext>` shim with the
+  Each launcher invokes the workspace-local `Scripts/Workflow.<ext>` shim with the
   `dispatch` subcommand, `--worker Default`, `--prompt Prompts/<Agent>.md`
   (relative to the workspace; `<Agent>` means the effective mapped prompt
   basename for that role when section 5.2 localization is enabled),
@@ -1391,7 +1399,8 @@ Workspaces/
   Changelog.md
   __archive__/                                    (empty directory; reserved)
   __template__/
-    Workflow.<ext>                                (workspace-local workflow shim)
+    Scripts/
+      Workflow.<ext>                              (workspace-local workflow shim)
     1. Open Integration Agent                     (per-agent launcher)
     2. Open Research Agent
     3. Open Planner Agent
@@ -1604,10 +1613,10 @@ the `Installation Agent` in section 8.2 step 1.
 
 ### Template per-workspace artifacts
 
-- `Workflow.<ext>` - workspace-local shim that forwards workflow commands to
-  `Scripts/Workflow.<ext>` using the authoritative workflow root selected at
-  scaffolding time. This shim is the only agent-facing script surface for
-  workspace-local `Work/*` operations.
+- `Scripts/Workflow.<ext>` - workspace-local shim that forwards workflow
+  commands to `Scripts/Workflow.<ext>` at workflow root using the
+  authoritative workflow root selected at scaffolding time. This shim is the
+  only agent-facing script surface for workspace-local `Work/*` operations.
 - `Workspace.md` - explains structure, repository roles, branch convention,
   and verification notes.
 - `Assignments.md` - free-form worker preference notes (human-facing only).
@@ -1681,8 +1690,9 @@ in any order:
   creates `Installation.md` with timestamped completion details after
   user confirmation.
 - A short note that `Scripts/Workflow.<ext>` is the canonical runtime
-  entrypoint and `Workspaces/<name>/Workflow.<ext>` is the workspace-local
-  shim used by prompts, launchers, and verifier finalization commands.
+  entrypoint and `Workspaces/<name>/Scripts/Workflow.<ext>` is the
+  workspace-local shim used by prompts, launchers, and verifier finalization
+  commands.
 - The dispatcher contract (the canonical flags of `Scripts/Dispatcher.<ext>`).
 - The work-queue directory set (`Next/`, `Current/`, `Blocked/`, `Done/`) and
   task-file naming convention.
@@ -2022,15 +2032,15 @@ Guidance:
     pass it as `--workspace <name>`; `Workspace - Remove` has **no**
     current-directory or `.` fallback,
   - when the Workspace Agent is operating from inside a workspace and needs a
-    workflow command for that same workspace, use only `Workflow.<ext>` at
-    the workspace root. Do not search for `Scripts/`, do not walk upward, and
-    do not invent alternative script paths,
+    workflow command for that same workspace, use only `Scripts/Workflow.<ext>`
+    inside that workspace. Do not search for `Scripts/`, do not walk upward,
+    and do not invent alternative script paths,
   - archive confirmation and execution must both show the explicit workspace
     argument (for example:
     from workflow root:
     `py "Scripts/Workflow.py" workspace-remove --workspace feature-initial-commit --synced`;
     from inside `Workspaces/feature-initial-commit/`:
-    `py "Workflow.py" workspace-remove --synced`),
+    `py "Scripts/Workflow.py" workspace-remove --synced`),
   - **preserve important facts/notes** on user request and before archival
     (see below),
   - open per-workspace agents by resolving the user's agent name to the
@@ -2091,7 +2101,8 @@ Guidance:
     confirmation,
   - explicit confirmation for archive, no remote push,
   - when acting on the current workspace from inside that workspace, treat
-    `Workflow.<ext>` at workspace root as the only allowed script entrypoint;
+    `Scripts/Workflow.<ext>` inside the workspace as the only allowed script
+    entrypoint;
     do not spend turns researching or comparing other workflow-script
     locations,
   - when calling the root runtime directly, never invoke
@@ -2101,12 +2112,12 @@ Guidance:
   - resolve "open <agent>" requests against the currently discussed
     workspace unless the user names a different one,
   - do not run broad file searches for scripts or launchers; use the
-    workspace-local `Workflow.<ext>` shim inside a workspace and fixed
+    workspace-local `Scripts/Workflow.<ext>` shim inside a workspace and fixed
     workflow-root-relative paths only for top-level launchers and manual root
     operations,
   - do not walk upward to discover `Scripts/` from prompt logic. If the
-    session starts inside a workspace folder, use `Workflow.<ext>` at that
-    workspace root.
+    session starts inside a workspace folder, use `Scripts/Workflow.<ext>` in
+    that workspace.
   - On Windows, always run workflow Python scripts through an explicit
     interpreter command (`py "<script>.py"` preferred) and quote paths that
     contain spaces.
@@ -2389,9 +2400,9 @@ Guidance:
   or workflow-state edits.
   For any operation that touches `Work/Next/`, `Work/Current/`,
   `Work/Blocked/`, `Work/Done/`, verifier finalization, or workflow rollback,
-  use only `Workflow.<ext>` at the workspace root. Do not search for other
-  scripts, do not walk upward to locate workflow files, and do not invent
-  alternative command paths.
+  use only `Scripts/Workflow.<ext>` inside the workspace. Do not search for
+  other scripts, do not walk upward to locate workflow files, and do not
+  invent alternative command paths.
   When triggering `Work - Do`, choose timeout values conservatively for
   long-running builds/tests/verifications: `--verifier-timeout` has no default
   and should be set only when an explicit cap is needed; avoid low values that
@@ -2415,11 +2426,11 @@ Guidance:
   `Plan`, not `Facts`.
 - Rules: one question at a time when clarifying; keep operations explicit
   and script-driven; the canonical workflow command surface inside a
-  workspace is `Workflow.<ext>` at workspace root, which forwards to the
-  root runtime. Do not reconstruct `Scripts/...` or `../../Scripts/...`
+  workspace is `Scripts/Workflow.<ext>` inside that workspace, which forwards
+  to the root runtime. Do not reconstruct `Scripts/...` or `../../Scripts/...`
   paths and do not propose copying workflow implementations into ordinary
-  workspaces. When acting on `Work/*` tasks, treat `Workflow.<ext>` as the
-  only allowed script entrypoint and do not spend turns researching or
+  workspaces. When acting on `Work/*` tasks, treat `Scripts/Workflow.<ext>` as
+  the only allowed script entrypoint and do not spend turns researching or
   comparing other workflow-script locations;
   treat `Plan` and `Work/Next/` as
   input, not output (do not edit `Plan` or seed/regenerate `Work/Next/`
@@ -2473,9 +2484,9 @@ Guidance:
     `Notes`, `Assignments`, `Issue`, `PR`, `Changelog`, `Backlog`,
     `Facts`, and every file under `Work/`.
   - if execution needs to reference a workflow operation or tell the caller
-    how to continue queue/state handling, refer only to `Workflow.<ext>` at
-    workspace root; do not suggest `Scripts/...`, `../../Scripts/...`, or any
-    searched alternative path.
+    how to continue queue/state handling, refer only to
+    `Scripts/Workflow.<ext>` inside the workspace; do not suggest
+    `Scripts/...`, `../../Scripts/...`, or any searched alternative path.
   - when a mutation is needed, use policy-enforced workflow paths (section
     4.1a and 9.0). Do not rely on post-hoc checks.
 - Output expectation: clear execution result focused on what was done, what
@@ -2503,8 +2514,8 @@ Guidance:
   - success: `current -> done`;
   - failure: `current -> blocked` with `--reason-kind FAIL` and a clear
     one-line reason.
-  The verifier must use only the ready-to-run `Workflow.<ext>` command lines
-  provided in the verifier tail for this finalization. Do not search for
+  The verifier must use only the ready-to-run `Scripts/Workflow.<ext>` command
+  lines provided in the verifier tail for this finalization. Do not search for
   other workflow scripts, do not reconstruct root-relative paths, and do not
   substitute direct `Scripts/...` or `../../Scripts/...` invocations.
   In both paths, the verifier passes `--verification-output-file` with the
@@ -2796,9 +2807,9 @@ Required rules:
   existing named scripts, but public behavior must remain identical to the
   referenced sections. Delegated calls must use the shared interpreter
   resolver from section 9.0b.
-- `Workspaces/<name>/Workflow.<ext>` is a workspace-local shim. It must not
-  search broadly for `Scripts/`; it resolves the authoritative workflow root
-  from scaffolded data and validates it before dispatch.
+- `Workspaces/<name>/Scripts/Workflow.<ext>` is a workspace-local shim. It
+  must not search broadly for `Scripts/`; it resolves the authoritative
+  workflow root from scaffolded data and validates it before dispatch.
 - When the workspace-local shim handles `work-do`, `work-move`, `work-undo`,
   or `dispatch` intended for the current workspace and `--workspace` was
   omitted, it injects the current workspace absolute path before forwarding.
@@ -2896,6 +2907,10 @@ def main():
 - de-duplicate while preserving deterministic lexical ordering of the final
   absolute paths;
 - return the normalized path list (or empty list when none were provided).
+
+If any provided `--context-file` value is empty or whitespace-only, the
+dispatcher must exit 2 with a clear message naming `--context-file` rather than
+silently dropping the value.
 
 ### 9.2 `Workspace - Create`
 
@@ -3095,6 +3110,9 @@ Implementation requirements:
   run (token JSON + verification output file): delete them only after a
   terminal reconciled outcome (`Done/Blocked`), and retain them on timeout,
   failed fallback finalization, or other non-terminal failures.
+- Rehearse-mode exception: because `--rehearse` must leave queue state
+  untouched, `Work - Do` must remove any verifier token record or scratch file
+  it created for that rehearse run before returning.
 
 Verification outcome handling:
 
@@ -3121,6 +3139,9 @@ Verification outcome handling:
     with run token and verification output path. Return 3. If recovery fails,
     keep task in `Current/` and report the failure.
   - anything else -> precondition error.
+- Recovery-result handling is mandatory: `Work - Do` must check the exit status
+  of every fallback `Work - Move` invocation and must not report recovery as if
+  it succeeded when the fallback move failed.
 
 Exit codes: 0 success, 2 user/precondition error, 3 verification failure,
 dispatcher's exit code on worker failure.
@@ -3415,8 +3436,8 @@ inspection):
 ## 10. OS launcher recipes
 
 Pick the recipe that matches the chosen OS. Per-workspace launchers invoke the
-workspace-local `Workflow.<ext>` shim with the `dispatch` subcommand and their
-fixed prompt path and worker. The top-level launcher is static and
+workspace-local `Scripts/Workflow.<ext>` shim with the `dispatch` subcommand
+and their fixed prompt path and worker. The top-level launcher is static and
 file-system gated: if `Installation.md` exists at workflow root, it invokes
 the canonical root runtime with `Prompts/Workspace Agent.md`; otherwise it
 invokes it with `Prompts/Installation Agent.md`.
@@ -3521,8 +3542,9 @@ Notes:
   backslash so the prefix test remains folder-exact (`Prompts\\...`, not
   similarly prefixed siblings).
 - The example above is the top-level launcher shape. Per-workspace Windows
-  launchers omit report gating and invoke `Workflow.<ext>` in the workspace
-  directory with `dispatch`, a relative prompt path (`Prompts/<Agent>.md`),
+  launchers omit report gating and invoke `Scripts/Workflow.<ext>` in the
+  workspace directory with `dispatch`, a relative prompt path
+  (`Prompts/<Agent>.md`),
   and `--workspace "."`; `<Agent>` resolves to the effective mapped prompt
   basename for that role when section 5.2 localization is enabled. The
   launcher itself must change to its own directory first (`cd /d "%~dp0"`)
@@ -3569,7 +3591,7 @@ Per-workspace launcher:
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-exec "<interpreter>" "./Workflow.<ext>" dispatch \
+exec "<interpreter>" "./Scripts/Workflow.<ext>" dispatch \
   --worker "Default" \
   --prompt "<prompt path>" \
   --workspace "." \
@@ -3580,8 +3602,8 @@ exec "<interpreter>" "./Workflow.<ext>" dispatch \
 
 For Go launchers, use `go run` semantics instead of a single interpreter
 token: `exec go run "<abs path to Scripts/Workflow.go>" ...` for the
-top-level launcher, and `exec go run "./Workflow.go" dispatch ...` (or the
-chosen Go-equivalent workspace-local shim path) for per-workspace launchers.
+  top-level launcher, and `exec go run "./Scripts/Workflow.go" dispatch ...` (or the
+  chosen Go-equivalent workspace-local shim path) for per-workspace launchers.
 
 Make the file executable (`chmod +x`).
 
@@ -3607,7 +3629,7 @@ Per-workspace launcher:
 [Desktop Entry]
 Type=Application
 Name=<launcher label>
-Exec=<interpreter> "<workspace path>/Workflow.<ext>" dispatch --worker "Default" --prompt "<prompt path>" --workspace "<workspace path or omit>" --mode tui --agent-name "<Agent Name>" --new-window
+Exec=<interpreter> "<workspace path>/Scripts/Workflow.<ext>" dispatch --worker "Default" --prompt "<prompt path>" --workspace "<workspace path or omit>" --mode tui --agent-name "<Agent Name>" --new-window
 Path=<working directory>
 Terminal=true
 ```
@@ -3806,8 +3828,8 @@ Verification execution order (compact anti-drift guard):
   `Workspace Agent.md` as its permanent prompt target. Verify
   scaffolded state has no `Installation.md` and `README.md` contains the
   initial Installation marker audit entry. Also verify that each created
-  workspace contains `Workflow.<ext>` and that per-workspace launchers target
-  that local shim rather than reconstructing `../../Scripts/...` paths.
+  workspace contains `Scripts/Workflow.<ext>` and that per-workspace launchers
+  target that local shim rather than reconstructing `../../Scripts/...` paths.
 5. `Work - Move` transition matrix check: in a scratch workspace create
    synthetic task files and verify each allowed transition from section
    4.5a succeeds, each disallowed transition fails, `Current/` singleton
@@ -3888,10 +3910,10 @@ Verification execution order (compact anti-drift guard):
        JSON files are created per run; on terminal reconciled outcomes
        (`Done/Blocked`) `Work - Do` removes that run's scratch artifacts, while
        non-terminal outcomes retain them for troubleshooting.
-   - Workflow-shim command generation check: confirm the verifier tail emits
-     ready-to-run finalization commands that target the absolute
-     workspace-local `Workflow.<ext>` shim path rather than direct
-     `Scripts/Work - Move.<ext>` paths.
+    - Workflow-shim command generation check: confirm the verifier tail emits
+      ready-to-run finalization commands that target the absolute
+      workspace-local `Scripts/Workflow.<ext>` shim path rather than direct
+      `Scripts/Work - Move.<ext>` paths.
 8. End-to-end UTF-8: when the chosen natural language uses non-ASCII
    characters, run the dispatcher in `--dry-run` against the Installation
    Agent prompt and confirm the printed harness command, including the
@@ -4081,9 +4103,9 @@ Protocol:
    Locality for steps 4-8 in this rehearsal protocol:
    - Commands are written assuming current directory is workflow root
      (contains `Scripts/` and `Workspaces/`).
-   - If you instead run from `Workspaces/rehearsal-smoke/`, invoke scripts via
-     `Workflow.<ext>` from the workspace root and let the shim resolve the
-     workflow root deterministically.
+    - If you instead run from `Workspaces/rehearsal-smoke/`, invoke scripts via
+      `Scripts/Workflow.<ext>` from the workspace and let the shim resolve the
+      workflow root deterministically.
 
 4. **Create a workspace.** Invoke
   `Scripts/Workflow.<ext> workspace-create --workspace rehearsal-smoke --branch

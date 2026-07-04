@@ -127,6 +127,8 @@ Workspaces/
   Backlog.md                        global backlog (append-only sync under workflow-root lock)
   Changelog.md                      global changelog (append-only sync under workflow-root lock)
   __template__/                     copied for every new workspace
+    Scripts/
+      Workflow.<ext>                workspace-local shim to root runtime
     1. Open Integration Agent.<launcher>    per-agent launchers
     2. Open Research Agent.<launcher>
     3. Open Planner Agent.<launcher>
@@ -162,8 +164,9 @@ Workspaces/
 
 Each new workspace (one per ticket / feature / experiment) is a copy of
 `__template__` with git worktrees attached for the repos you work on,
-plus its own prompts, plan, status, work queue, and a durable
-`Facts.md` that captures confirmed project facts across tasks.
+plus its own `Scripts/Workflow.<ext>` shim, prompts, plan, status, work
+queue, and a durable `Facts.md` that captures confirmed project facts across
+tasks.
 
 ---
 
