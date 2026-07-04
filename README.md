@@ -118,6 +118,9 @@ Scripts/
   Policy.<ext>                      shared runtime file policy utility
   Workspace - Create.<ext>
   Workspace - Remove.<ext>
+  Work - Do.<ext>
+  Work - Move.<ext>
+  Work - Undo.<ext>
   Logger.<ext>                      shared logging utility
   Workers/Default.<ext>             AI harness wrapper
 Workspaces/
@@ -141,10 +144,6 @@ Workspaces/
     PR.md                           pull request draft
     Research.md                     research log (edited in place)
     Status.md                       Part/Expected/Current/% table
-    Scripts/                        per-workspace work orchestration scripts
-      Work - Do.<ext>
-      Work - Move.<ext>
-      Work - Undo.<ext>
     Prompts/                        per-workspace agent prompts
       Integration Agent.md
       Research Agent.md
@@ -185,18 +184,14 @@ You have several equally valid entry points, pick whichever fits:
   will pick a sensible way to surface every knob (tasks, run configs,
   status bar buttons, a side panel, …) for the editor you use.
 - **From a pipeline.** Every entry point under `Scripts/` is
-  non-interactive by design.
-  Use root scripts for global orchestration (`Dispatcher`,
-  `Workspace - Create`, `Workspace - Remove`) and workspace-local
-  scripts for queue state (`<workspace>/Scripts/Work - Do`,
-  `<workspace>/Scripts/Work - Move`, `<workspace>/Scripts/Work - Undo`).
-  Example unattended role invocation:
+  non-interactive by design — including the agent dispatcher itself.
   `Scripts/Dispatcher --worker Default --prompt <path/to/role-prompt.md> --workspace <ws> --mode cli --tail <text> --agent-name <name> --context-file <path> [repeat] --dry-run --new-window`
-  Example unattended queue invocation from a workspace root:
-  `Scripts/Work - Do --mode cli`
-  Missing a decision flag on any script exits non-zero with a message
-  naming the exact flag. The whole surface drops cleanly into Make
-  targets, CI jobs, git hooks, or any other automation.
+  runs any of the five roles unattended (the harness is invoked in its
+  non-interactive mode: `opencode run`, `claude -p`, etc.) and returns
+  an exit code. Missing a decision flag on any script exits non-zero
+  with a message naming the exact flag. The whole surface drops
+  cleanly into Make targets, CI jobs, git hooks, or any other
+  automation.
 - **From the top-level Workspace Agent.** Stay in one session and let
   it open the others for you — it can spawn a Research / Planner /
   Worker / Reviewer session for any workspace, hand the task over, and
@@ -228,9 +223,6 @@ A few things that make this different from "just prompting an agent":
   or exits without finalizing, `Work - Do` performs a deterministic
   fallback finalization to `Blocked` (`DISPATCHER` / `INVALID`) instead
   of leaving the task silently stuck in `Current`.
-- **Workspace-local queue control.** `Work - Do` / `Work - Move` /
-  `Work - Undo` live inside each workspace (`<workspace>/Scripts/`) so
-  queue operations are anchored to the active workspace state by default.
 - **Fast, explicit handoffs.** The five workspace roles can switch in
   the same chat on request, so you can redirect flow without losing
   context. The launcher-based path still exists when you want a fresh
