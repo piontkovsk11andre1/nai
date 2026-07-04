@@ -240,7 +240,7 @@ The scaffolded distribution must ship as a clean, generic baseline:
   through it. The `Installation Agent` does not reconfigure this wrapper.
 - `Workspaces/__template__/` ships with **no** repository placeholders.
   The scaffolder creates the template root and its workflow files
-  (`Prompts/`, `Work/`, per-workspace markdown stubs) but no
+  (`Prompts/`, `Scripts/`, `Work/`, per-workspace markdown stubs) but no
   `Configuration/`, `Documentation/`, `Implementation/`, or any other
   repo directories. The `Installation Agent` collects the user's actual
   repositories (URL + optional branch + optional folder name) and
@@ -1310,9 +1310,6 @@ Scripts/
   Policy.<ext>                                    (shared runtime file policy utility)
   Workspace - Create.<ext>
   Workspace - Remove.<ext>
-  Work - Do.<ext>
-  Work - Move.<ext>
-  Work - Undo.<ext>
   Logger.<ext>                                    (shared logging utility, section 9.7)
   Workers/
     Default.<ext>
@@ -1338,6 +1335,10 @@ Workspaces/
     PR.md
     Research.md
     Status.md
+    Scripts/
+      Work - Do.<ext>
+      Work - Move.<ext>
+      Work - Undo.<ext>
     Prompts/
       Integration Agent.md
       Planner Agent.md
@@ -1522,9 +1523,6 @@ the `Installation Agent` in section 8.2 step 1.
   scripts (section 4.1a and 9.0).
 - `Scripts/Workspace - Create.<ext>` - section 4.7 and 9.2.
 - `Scripts/Workspace - Remove.<ext>` - section 4.8 and 9.3.
-- `Scripts/Work - Do.<ext>` - section 4.5 and 9.4.
-- `Scripts/Work - Move.<ext>` - section 4.5a and 9.5a.
-- `Scripts/Work - Undo.<ext>` - section 4.6 and 9.5.
 - `Scripts/Workers/Default.<ext>` - worker wrapper for the chosen harness in
   CLI and TUI modes (section 4.2, 9.6, and 11).
 - `Scripts/Logger.<ext>` - shared logging utility (section 9.7) imported
@@ -1537,7 +1535,7 @@ the `Installation Agent` in section 8.2 step 1.
 - `Workspaces/__archive__/` - empty directory; reserved.
 - `Workspaces/__template__/` - everything below. The template ships with
   **no** repository directories: only the workflow coordination
-  subdirectories (`Prompts/`, `Work/`) and the per-workspace markdown
+  subdirectories (`Prompts/`, `Scripts/`, `Work/`) and the per-workspace markdown
   files. The `Installation Agent` creates repository directories on
   the user's machine based on the user's answers (section 8.2 step 2).
 
@@ -1559,6 +1557,12 @@ the `Installation Agent` in section 8.2 step 1.
 - `PR.md` - pull request draft stub.
 - `Research.md` - research artifact stub; default text says "No research."
 - `Status.md` - status table stub with the five columns from section 4.9.
+
+### Template per-workspace scripts
+
+- `Scripts/Work - Do.<ext>` - section 4.5 and 9.4.
+- `Scripts/Work - Move.<ext>` - section 4.5a and 9.5a.
+- `Scripts/Work - Undo.<ext>` - section 4.6 and 9.5.
 
 ### Template per-agent prompts
 
@@ -1829,7 +1833,7 @@ Guidance:
        repos have their upstream set as configured by `git clone`, and
        `Workspaces/__template__/` contains no extra directories beyond
        the ones the user added in step 2 and the built-in workflow
-       directories (`Prompts/`, `Work/`).
+       directories (`Prompts/`, `Scripts/`, `Work/`).
      - `Workspaces/__template__/Workspace.md` reflects the user's
        repository list and naming/branch conventions from steps 2-3
        (the "Repository layout" section lists exactly the repos added
@@ -2004,6 +2008,10 @@ Guidance:
        push.
   - There is no automatic cross-workspace Facts merge, no workspace-wide
     Facts overwrite, and no global Facts reconciliation process.
+  - do not run `Work - Do`, `Work - Move`, or `Work - Undo` from this
+    prompt. Those actions belong to `Worker Agent` inside a workspace.
+    If the user asks for work-queue execution here, open or hand off to
+    `Worker Agent` for the same workspace.
   - **Before archival**: when the user asks to archive a workspace,
     first ask one question -- "What is important to preserve before
     archiving? (Say 'none' to skip.)" -- and run the preservation
@@ -2025,6 +2033,9 @@ Guidance:
   - if the session starts inside a workspace folder, resolve the workflow
     root by walking upward to the directory that contains both `Scripts/`
     and `Workspaces/`, then use workflow-root-relative paths from there.
+  - if workflow-root resolution fails, stop with one clear error that names
+    the expected markers (`Scripts/` and `Workspaces/`) and asks the user
+    to reopen from a valid workflow path.
 - Notes: keep explanations user-facing: say what you are doing, what happens
   next, and how the user can continue. Per-workspace work happens inside
   workspace prompts and markdown files; the global backlog/changelog files
@@ -2324,11 +2335,11 @@ Guidance:
   existing entries; ephemeral task-specific notes go in `Notes` or
   `Plan`, not `Facts`.
 - Rules: one question at a time when clarifying; keep operations explicit
-  and script-driven; workflow scripts live at workflow root `Scripts/`, not
-  inside workspace directories (never propose creating `Work - Do` or
-  `Work - Move` or `Work - Undo` inside a workspace); if the session starts in a workspace
-  folder, locate the root scripts by walking upward to the directory that
-  contains `Scripts/Work - Do.<ext>`; treat `Plan` and `Work/Next/` as
+  and script-driven; queue scripts (`Work - Do`, `Work - Move`, `Work - Undo`)
+  live inside each workspace under `Scripts/`; never propose ad hoc queue
+  edits that bypass those scripts. If the session starts in a workspace
+  folder, use workspace-local script paths first (`Scripts/Work - Do.<ext>`,
+  `Scripts/Work - Move.<ext>`, `Scripts/Work - Undo.<ext>`). Treat `Plan` and `Work/Next/` as
   input, not output (do not edit `Plan` or seed/regenerate `Work/Next/`
   unless the user explicitly asks -- the canonical path for new tasks
   is through the Planner Agent). Keep status updates practical: what was
@@ -2336,6 +2347,10 @@ Guidance:
   occurs, explain the denied target and continue via an allowed file target
   or script path instead of asking for extra confirmation unless a
   destructive gate in this spec requires it.
+  For workspace-local queue scripts, use the current workspace path as
+  anchor; if `Scripts/Work - Do.<ext>` is missing there, stop with a clear
+  precondition error and instruct the caller to recreate/fix the workspace
+  from template rather than guessing another script location.
 
 ### 8.19 Template `Prompts/Reviewer Agent.md`
 
@@ -3036,25 +3051,25 @@ Canonical invocation examples (paths shown as relative for readability):
 - Start next task:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from next --to current --task "w-0007. API retry policy.md"
+  Workspaces/my-ws/Scripts/Work - Move --workspace Workspaces/my-ws --from next --to current --task "w-0007. API retry policy.md"
   ```
 
 - Finalize verification success and append verifier output:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to done --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
+  Workspaces/my-ws/Scripts/Work - Move --workspace Workspaces/my-ws --from current --to done --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
   ```
 
 - Finalize verification failure with explicit reason:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
+  Workspaces/my-ws/Scripts/Work - Move --workspace Workspaces/my-ws --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file Workspaces/my-ws/.tmp/workflow/verify.txt --finalization-token <token>
   ```
 
 - Reopen completed task:
 
   ```
-  Scripts/Work - Move --workspace Workspaces/my-ws --from done --to next --task "w-0007. API retry policy.md"
+  Workspaces/my-ws/Scripts/Work - Move --workspace Workspaces/my-ws --from done --to next --task "w-0007. API retry policy.md"
   ```
 
 ### 9.6 `Workers/Default`
@@ -3823,9 +3838,9 @@ Protocol:
 5. **Queue a synthetic task, promote it, and run `Work - Do`.** Write a single task file
    `Workspaces/rehearsal-smoke/Work/Next/w-0001. Rehearsal task.md`
    (something trivial, e.g. "touch a file in RehearsalA/"). Promote it with
-  `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from next --to current --task "w-0001. Rehearsal task.md"`.
+  `Workspaces/rehearsal-smoke/Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from next --to current --task "w-0001. Rehearsal task.md"`.
   Then invoke
-  `Scripts/Work - Do --workspace Workspaces/rehearsal-smoke --mode cli
+  `Workspaces/rehearsal-smoke/Scripts/Work - Do --workspace Workspaces/rehearsal-smoke --mode cli
   --rehearse`. Assert:
    - `Work/Current/` contains the task file with valid rollback frontmatter
      (section 4.4) carrying real commit hashes from the three rehearsal repos,
@@ -3835,18 +3850,18 @@ Protocol:
 
    Additional simulated finalization assertions (still no real harness calls):
    - Simulate verifier success by invoking
-     `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to done --verification-output-file <tmp-success-output.txt>`
+     `Workspaces/rehearsal-smoke/Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to done --verification-output-file <tmp-success-output.txt>`
      and assert the task moves to `Work/Done/` with an appended
      `Verification Output` section.
    - Move the task back to `Work/Current/` via
      `Work - Move --from done --to next` then
      `Work - Move --from next --to current`.
    - Simulate verifier failure by invoking
-     `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to blocked --reason-kind FAIL --reason "Rehearsal simulated verifier failure" --verification-output-file <tmp-failure-output.txt>`
+     `Workspaces/rehearsal-smoke/Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to blocked --reason-kind FAIL --reason "Rehearsal simulated verifier failure" --verification-output-file <tmp-failure-output.txt>`
      and assert the task moves to `Work/Blocked/`, appends a
      `Verification Output` section, and adds blocked-reason frontmatter.
    - Invoke
-     `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from blocked --to done`
+     `Workspaces/rehearsal-smoke/Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from blocked --to done`
      so the task is in `Work/Done/` for the explicit undo exercise below.
 
 6. **Exercise `--current-action validate-only`.** Move the task back to
@@ -3857,12 +3872,12 @@ Protocol:
   unchanged.
 
 7. **Exercise `Work - Undo`.** Invoke
-   `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
+  `Workspaces/rehearsal-smoke/Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
    1` and assert it refuses without `--force`. Then finalize the current task
   into done via
-  `Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to done`
+  `Workspaces/rehearsal-smoke/Scripts/Work - Move --workspace Workspaces/rehearsal-smoke --from current --to done`
   and invoke
-   `Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
+  `Workspaces/rehearsal-smoke/Scripts/Work - Undo --workspace Workspaces/rehearsal-smoke --count
    1 --force --snapshot-before-undo <tmp-undo-snapshot>`. Assert:
    - the task returned to `Work/Next/` without rollback frontmatter,
    - the undo snapshot exists and was created before destructive git commands,
