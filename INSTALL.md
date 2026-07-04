@@ -737,6 +737,16 @@ Invoked non-interactively with these arguments:
   `current -> done|blocked` finalization when a verifier token is active)
 - `--force-unlock` (optional flag; explicit workspace-lock recovery)
 
+Locality and working-directory contract:
+
+- Workflow scripts are owned by workflow root `Scripts/`.
+- If you launch from workflow root, script paths are `Scripts/...`.
+- If you launch from a workspace directory (for example `Workspaces/my-ws/`),
+  script paths are `../../Scripts/...`.
+- `--workspace` uses the same default as `Work - Do` (current directory when
+  it looks like a workspace), but examples below pass explicit values to avoid
+  locality ambiguity.
+
 Allowed transitions are exactly:
 
 - `next -> current`
@@ -1960,7 +1970,10 @@ Guidance:
     current-directory or `.` fallback,
   - archive confirmation and execution must both show the explicit workspace
     argument (for example:
-    `py "Scripts/Workspace - Remove.py" --workspace feature-initial-commit --synced`),
+    from workflow root:
+    `py "Scripts/Workspace - Remove.py" --workspace feature-initial-commit --synced`;
+    from inside `Workspaces/feature-initial-commit/`:
+    `py "../../Scripts/Workspace - Remove.py" --workspace . --synced`),
   - **preserve important facts/notes** on user request and before archival
     (see below),
   - open per-workspace agents by resolving the user's agent name to the
@@ -3048,6 +3061,8 @@ For Python-based workflows on Windows, render these commands with explicit
 interpreter invocation (for example `py "Scripts/Work - Move.py" ...`) rather
 than bare `.py` paths.
 
+From workflow root (current directory contains `Scripts/` and `Workspaces/`):
+
 - Start next task:
 
   ```
@@ -3070,6 +3085,32 @@ than bare `.py` paths.
 
   ```
   <interpreter> "Scripts/Work - Move.<ext>" --workspace Workspaces/my-ws --from done --to next --task "w-0007. API retry policy.md"
+  ```
+
+From inside the workspace directory (`Workspaces/my-ws/`):
+
+- Start next task:
+
+  ```
+  <interpreter> "../../Scripts/Work - Move.<ext>" --workspace . --from next --to current --task "w-0007. API retry policy.md"
+  ```
+
+- Finalize verification success and append verifier output:
+
+  ```
+  <interpreter> "../../Scripts/Work - Move.<ext>" --workspace . --from current --to done --verification-output-file .tmp/workflow/verify.txt --finalization-token <token>
+  ```
+
+- Finalize verification failure with explicit reason:
+
+  ```
+  <interpreter> "../../Scripts/Work - Move.<ext>" --workspace . --from current --to blocked --reason-kind FAIL --reason "Unit tests fail in repo Implementation" --verification-output-file .tmp/workflow/verify.txt --finalization-token <token>
+  ```
+
+- Reopen completed task:
+
+  ```
+  <interpreter> "../../Scripts/Work - Move.<ext>" --workspace . --from done --to next --task "w-0007. API retry policy.md"
   ```
 
 ### 9.6 `Workers/Default`
@@ -3831,6 +3872,12 @@ Protocol:
   workflow root, exactly the operation described in section 10.4. Verify the
   static launcher parses and resolves `Workspace Agent` via Installation marker
   gating.
+
+   Locality for steps 4-8 in this rehearsal protocol:
+   - Commands are written assuming current directory is workflow root
+     (contains `Scripts/` and `Workspaces/`).
+   - If you instead run from `Workspaces/rehearsal-smoke/`, invoke scripts via
+     `../../Scripts/...` and prefer `--workspace .`.
 
 4. **Create a workspace.** Invoke
    `Scripts/Workspace - Create --workspace rehearsal-smoke --branch
