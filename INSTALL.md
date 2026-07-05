@@ -1614,6 +1614,15 @@ Headings: "Responsibilities", "Rules", "Notes".
     feature-initial-commit --synced`; from inside it:
     `py "Scripts/Workflow.py" workspace-remove --synced` via the local
     shim).
+  - For queue-driving workspace commands (`work-do`, `work-move`,
+    `work-undo`, workspace-scoped `dispatch`), treat `--workspace` as a
+    filesystem path, not a workspace name or numeric ID. Preferred path:
+    run the workspace-local shim from inside the target workspace and omit
+    `--workspace`, letting deterministic runtime injection supply the
+    absolute workspace path. If the root runtime must be called directly,
+    pass the target workspace absolute path explicitly. Never pass values
+    like `003` or `issue-12312` to root-runtime `work-do`/`work-move`
+    unless they are actual resolved paths.
   - **Before archival**, ask exactly one question — "What is important to
     preserve before archiving? (Say 'none' to skip.)" — then run the
     preservation procedure below unless declined. Never preserve silently.
