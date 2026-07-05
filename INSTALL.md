@@ -35,9 +35,28 @@ Reading rules:
   for this session and all generated artifacts. After the answer, switch
   immediately and completely (section 9.1).
 - **Interview discipline.** One question at a time, in section 3 order.
-  Wait, acknowledge briefly, ask the next.
+  The required sequence lives in section 3; human-facing wording lives in
+  section 3.1a.
 - **Then:** scaffold per Parts II–III, verify per section 14, hand off per
   section 16.
+
+### 0.1 Conversation style layer
+
+This document separates **protocol** from **conversation style**.
+
+- **Protocol** is the required behavior: question order, safety gates,
+  contracts, file outputs, and validation.
+- **Conversation style** is how the agent phrases messages while carrying out
+  that behavior.
+- When style and protocol appear to compete, keep the protocol and simplify
+  the wording.
+- Do not restate the user's answer unless it is needed to confirm a risky
+  decision.
+- Do not ask the same question twice in different words.
+- Prefer one direct question per turn, with one short sentence of context at
+  most.
+- If a safety gate is triggered, ask only that gate question, then return to
+  the main sequence.
 
 ---
 
@@ -128,6 +147,18 @@ integration, and add-ons are all deferred to the `Installation Agent`
 AI harness for the `Default` worker — it must work at first launch because
 the launcher immediately opens the `Installation Agent` through it.
 
+### 3.1a Interview phrasing
+
+Apply this style while following section 3.1 exactly:
+
+- Ask the next required question directly.
+- Use plain language and short sentences.
+- Avoid conversational filler, paraphrased repeats, and multi-part framing.
+- Brief acknowledgments are optional, not required.
+- If the user's answer is clear, move on instead of rephrasing it back.
+- When a yes/no safety gate is needed, say what triggered it and ask the gate
+  in one sentence.
+
 1. **Language.** Which natural language for this conversation and all
    generated files? Default: English. File/directory names stay canonical
    English unless the user explicitly asks for localized names in this
@@ -215,8 +246,9 @@ The scaffolded distribution is a generic baseline:
   `Installation Agent` creates them from the user's answers.
 - Template `Workspace.md` carries the generic naming/branch defaults
   (section 11.5); `Framework.md` carries the brownfield stub (11.8);
-  `Prompts/Integration Agent.md` carries the "not configured" tracker
-  section (11.12). The `Installation Agent` rewrites all three.
+  `Workspaces/__template__/Prompts/Integration Agent.md` carries the
+  "not configured" tracker section (11.12). The `Installation Agent`
+  rewrites all three.
 - `Installation.md` is absent. `Manifest.json` is present.
 
 ---
@@ -1453,8 +1485,9 @@ wired it, and this agent is running through it right now.
      template `Backlog.md`.
   5. *Integration profile.* Ask where tasks/progress are tracked externally
      (Gitea, GitHub, GitLab, Jira, Linear, none); update the template
-     `Prompts/Integration Agent.md` with the details, or leave the explicit
-     "not configured" section and record that fact.
+      `Workspaces/__template__/Prompts/Integration Agent.md` with the
+      details, or leave the explicit "not configured" section and record
+      that fact.
   6. *Add-ons (catch-all).* One free-form prompt: "Any integrations or
      add-ons to wire in? Examples: open workspaces in VS Code on request,
      desktop notifications, an MCP server. Say 'none' to skip." For each
@@ -1477,8 +1510,9 @@ wired it, and this agent is running through it right now.
      built-in workflow content; `Workspace.md` reflects steps 2–3 with no
      leftover placeholders; `Framework.md` matches the step-4 decision
      (map, or stub + backlog note — exactly one of the two);
-     `Prompts/Integration Agent.md` reflects step 5; step-6 edits are
-     present exactly where declared and declined add-ons left no traces;
+    `Workspaces/__template__/Prompts/Integration Agent.md` reflects step
+    5; step-6 edits are present exactly where declared and declined
+    add-ons left no traces;
      any step-1 wrappers reuse the two bootstrap sentences byte-exactly;
      dispatcher smoke test —
      `dispatch --worker Default --prompt <abs Installation Agent path>
@@ -1507,9 +1541,9 @@ wired it, and this agent is running through it right now.
 - **Expected output artifacts:** optional extra wrappers (Default
   untouched); zero or more template repos with resolvable HEADs; updated
   `Workspace.md`; `Framework.md` per the step-4 decision; updated
-  `Prompts/Integration Agent.md`; step-6 edits confined to their named
-  files; `Installation.md` created; the scaffolder's `Facts.md` stub left
-  untouched.
+  `Workspaces/__template__/Prompts/Integration Agent.md`; step-6 edits
+  confined to their named files; `Installation.md` created; the
+  scaffolder's `Facts.md` stub left untouched.
 
 ### 11.3 `Prompts/Workspace Agent.md`
 
