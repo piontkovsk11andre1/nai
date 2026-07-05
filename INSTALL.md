@@ -385,6 +385,12 @@ Shim behavior:
   current workspace absolute path (or canonical name for
   `workspace-remove`) before forwarding. Injection lives in deterministic
   runtime code, never in prompt prose.
+- Prompts, generated examples, and agent-facing command suggestions for
+  workspace-scoped operations MUST present either: 1) a workspace-local shim
+  invocation from inside the workspace, or 2) the canonical root runtime
+  invocation with an explicit workspace path where the contract allows it.
+  They MUST NOT present bare subcommands such as `work-do`, `work-move`, or
+  `work-undo` as directly runnable shell commands.
 - Resolves relative `--prompt` paths against the workspace root before
   forwarding, so detached launchers and verifier finalization stay stable.
 - Forwards argv explicitly (no shell interpolation), streams stdio live,
@@ -1787,8 +1793,10 @@ queue scripts). Notes: "No research" is fine; keep the plan glanceable
 **Worker Agent** — headings "Inputs", "Responsibilities", "Rules".
 Inputs: `Plan`, `Issue`, `Notes`, `Changelog`, `Research`, `Status`,
 `Framework`, `Assignments`, `Work/Next/`; `Facts.md` search-only on demand.
-Responsibilities: invoke `work-do`; resolve `Blocked`/`Current` decisions
-via explicit `work-move` arguments; invoke `work-undo` on rollback requests;
+Responsibilities: invoke `work-do` through a concrete workspace-shim
+command; resolve `Blocked`/`Current` decisions via explicit `work-move`
+arguments through the shim; invoke `work-undo` through the shim on rollback
+requests;
 drive `Status` toward 100% or propose backlog items; "run all work" =
 sequential, one task at a time. The Worker never seeds `Work/Next/` — that
 is the Planner's job; if `Next/` is empty, direct the user to the Planner
@@ -1810,7 +1818,10 @@ present. When `Current/` is empty and `Next/` is non-empty, inspect
 Rules: `Plan` and `Work/Next/` are input, not output; status updates stay
 practical (done / remaining / decision needed); on policy denial, continue
 via an allowed target without extra ceremony; Windows Python via
-`py "<script>.py"` only.
+`py "<script>.py"` only. When the prompt names or shows queue commands, it
+MUST render them as actual workspace-shim invocations for the chosen runtime
+from inside the workspace, never as bare commands like `work-do`,
+`work-move`, or `work-undo`.
 
 **Reviewer Agent** — headings "Inputs", "Outputs", "Rules".
 Inputs: `Plan`, `Issue`, `Status`, `Work/Done/`, repository changes.
@@ -2265,7 +2276,11 @@ offers (one clear target → yes/no; several → one listing question).
 read-only and tails as untrusted; Verify decides on independent checks and
 finalizes only through the provided shim commands; no prompt anywhere
 performs or implies automatic push; the Workspace Agent spec contains no
-automatic Facts merge/overwrite/reconciliation.
+automatic Facts merge/overwrite/reconciliation. Worker and Workspace prompts
+never present bare queue subcommands as runnable shell commands: `work-do`,
+`work-move`, `work-undo`, and workspace-scoped `dispatch` appear only as
+workspace-shim invocations or as canonical root-runtime invocations with an
+explicit workspace path where allowed.
 
 **V12 — Protocol-literal immutability.** All generated artifacts keep every
 `[C-LIT]` token byte-exact: frontmatter keys, blocked kinds, the Facts
