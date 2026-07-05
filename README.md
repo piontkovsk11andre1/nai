@@ -4,7 +4,7 @@ A 2026-style delivery workflow for AI coding agents, tightly integrated
 with git through an extensible Integration Agent role. It is not a
 framework you import and not a CLI you install — it is a small set of
 markdown prompts and scripts that an AI agent scaffolds into your project,
-and that you then drive yourself.
+and that you then use through role-based agent sessions.
 
 It works on any repository: a greenfield prototype, a long-lived monorepo,
 or several unrelated repos pulled into one workspace. And because the
@@ -14,7 +14,7 @@ your AI harness.
 
 The latest release includes a machine-readable `Manifest.json` as the single
 source of truth for the install, a built-in `doctor` health check, a `relink`
-command that makes the whole directory relocation-proof, idempotent
+capability that makes the whole directory relocation-proof, idempotent
 repair-mode reinstalls, and a spec rebuilt around stable contract IDs so every
 generated artifact is verifiable against the exact rule it implements.
 
@@ -34,20 +34,9 @@ directory it leaves behind is a self-contained distribution pinned to your
 platform and harness — and recorded in `Manifest.json`, so the tooling
 always knows what it was built for.
 
-Moved the directory to another path or machine? Run one command from the new
-root and everything rebinds:
-
-```
-<interpreter> "Scripts/Workflow.<ext>" relink
-```
-
-Suspect something drifted — a deleted launcher, a stale lock, a leftover
-verifier token? Ask the installation to check itself:
-
-```
-<interpreter> "Scripts/Workflow.<ext>" doctor        # read-only report
-<interpreter> "Scripts/Workflow.<ext>" doctor --fix  # safe repairs only
-```
+Moved the directory to another path or machine? Nai can relink itself to the
+new root. Suspect something drifted — a deleted launcher, a stale lock, a
+leftover verifier token? Nai can audit itself and apply safe repairs.
 
 Rerunning the installer against an existing Nai root is a **repair**, not a
 failure: it regenerates only what is missing or drifted and never touches
@@ -58,9 +47,9 @@ The first time you open the top-level launcher it runs a one-off
 conventions, asks about any add-ons or tweaks you want, and then creates
 `Installation.md`. From then on, the same static launcher detects that file
 and opens the day-to-day **Workspace Agent**. As part of installation
-checks, the installer verifies dispatcher dry-run command construction,
-harness startup liveness (`--version` / `--help`), and a full
-`doctor` pass before marking installation complete.
+checks, the installer verifies that the harness can start, that dispatch is
+healthy, and that the full installation passes its built-in audit before
+marking installation complete.
 
 ## Installation Record Audit
 
@@ -200,7 +189,8 @@ that carries confirmed project facts across tasks.
 
 ## ▶️ How you run it
 
-Several equally valid entry points — pick whichever fits:
+You run Nai by talking to agents, not by memorizing commands. The common
+entry points are:
 
 - **Double-click a launcher.** A tactile, OS-native entry into any role:
   each workspace ships five launchers (`.cmd` on Windows, `.command` on
@@ -212,13 +202,6 @@ Several equally valid entry points — pick whichever fits:
   (VS Code, JetBrains, Zed, …) — it knows the layout and will surface every
   knob for the editor you use: tasks, run configs, status-bar buttons, a
   side panel.
-- **From a pipeline.** Every entry point under `Scripts/` is non-interactive
-  by design — including the dispatcher.
-  `Scripts/Dispatcher --worker Default --prompt <role-prompt.md> --workspace <ws> --mode cli --tail <text> --agent-name <name> --context-file <path> [repeat] --dry-run --new-window`
-  runs any of the five roles unattended (`opencode run`, `claude -p`, …) and
-  returns an exit code. A missing decision flag exits non-zero naming the
-  exact flag. The whole surface — including `doctor` as a CI health gate —
-  drops cleanly into Make targets, CI jobs, and git hooks.
 - **From the top-level Workspace Agent.** Stay in one session and let it
   open the others: it can spawn a Research / Planner / Worker / Reviewer
   session for any workspace, hand the task over, and come back. If the
@@ -228,6 +211,9 @@ Several equally valid entry points — pick whichever fits:
   switch directly ("switch to planner", "become worker") and continue in
   the same chat. Out-of-scope requests get a same-session handoff offer to
   the best-fit role.
+
+Under the hood, Nai still has a scriptable runtime for launchers, checks,
+and automation surfaces. The README stays focused on the agent-facing flow.
 
 That clickable role-by-role entry is intentional: it disciplines you to use
 the stages as control and confirmation points, so **your** own mistakes get
@@ -249,9 +235,9 @@ A few things that make this different from "just prompting an agent":
   fallback to `Blocked` (`DISPATCHER` / `INVALID`) instead of leaving the
   task silently stuck.
 - **Self-diagnosing.** `doctor` audits the manifest, scripts, launchers,
-  queue integrity, stale locks, and leftover verifier tokens on demand —
-  and `doctor --fix` performs only the safe repairs. `relink` survives
-  moves, renames, and machine migrations with one command.
+  queue integrity, stale locks, and leftover verifier tokens on demand, with
+  a safe-repair mode for non-destructive fixes. `relink` survives
+  moves, renames, and machine migrations cleanly.
 - **Fast, explicit handoffs.** The five workspace roles switch in the same
   chat on request, so you redirect flow without losing context; launchers
   still exist when you want a fresh window.
@@ -292,7 +278,7 @@ A few things that make this different from "just prompting an agent":
   `Workspaces/__template__/Prompts/`. Edit the template to affect every new
   workspace, or a specific workspace for one-off tweaks.
 - **Workers.** Drop a new script next to `Scripts/Workers/Default` and pass
-  `--worker <name>`. Each wrapper is driven by a small capability descriptor
+  it to the runtime through the matching worker name. Each wrapper is driven by a small capability descriptor
   (binary, cli/tui patterns, attach flag, liveness probe), so wiring a new
   harness is filling in a form — and since a wrapper is just a script, it
   can call any API over any protocol.
