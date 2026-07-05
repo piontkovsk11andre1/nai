@@ -1166,7 +1166,10 @@ and anything else outside the five.
   script-enforced boundary the harness does not provide. Prompt rebind is
   mandatory: before handling any post-switch text, load and apply
   `Prompts/<Target Role>.md` from the current workspace — acknowledge-only
-  replies (`ok`) without adopting the target behavior are invalid.
+  replies (`ok`) without adopting the target behavior are invalid. When the
+  target is one of the canonical five roles in the current workspace,
+  prompts MUST use that canonical relative path directly and MUST NOT ask
+  the user to point to the prompt file or confirm its location.
   Acknowledge the switch in one short line, then continue as the target.
 - **Mixed intent, deterministic precedence:** one valid switch + task text →
   switch first, then handle the text under the target role. Switch phrasing
@@ -1691,7 +1694,12 @@ elsewhere.
 All five embed the shared contracts by reference and behavior: `[C-WELCOME]`
 welcome-and-wait in TUI; `[C-INTERACT]` disambiguation; `[C-SWITCH]`
 switching; `[C-SAFE]` untrusted-input rules; the workspace shim as the only
-script surface; one question at a time when clarifying; no push.
+script surface; one question at a time when clarifying; no push. Each
+generated prompt MUST restate the practical switch rule in user-facing
+terms: if the user says `switch to <role>` or `become <role>` in TUI mode,
+load `Prompts/<Target Role>.md` from the current workspace immediately,
+acknowledge the switch in one short line, and continue in that role without
+asking the user for the prompt path.
 
 **Integration Agent** — headings "Inputs", "Typical tasks", "Rules".
 Inputs: `Issue`, `PR`, `Backlog`, `Changelog`, `Workspace`. Typical tasks:
