@@ -810,9 +810,12 @@ critical section committed atomically before verifier dispatch.
    the same snapshot.
 2. `Current/` empty: `Blocked/` non-empty → validate its filenames, exit 2
    instructing resolution via `Work - Move`; else `Next/` non-empty →
-   validate its filenames, exit 2 instructing
-   `work-move --from next --to current`; both empty → print one idle line,
-   exit 0. (No auto-promotion, ever.)
+  validate its filenames, exit 2 instructing
+  `work-move --from next --to current --task <file-name>`; when exactly
+  one canonical task exists in `Next/`, the message SHOULD name that file
+  explicitly; when several exist, it SHOULD list the candidates and require
+  an explicit choice. Both empty → print one idle line, exit 0. (No
+  auto-promotion, ever.)
 3. Execute + verify the active task:
    - Tail = the current task body with metadata frontmatter stripped.
    - `execute-verify`: dispatch the execution worker with the workspace's
@@ -1767,6 +1770,12 @@ verifies into `Done/`, create one local git commit per changed repo before
 the next task — only after successful verification, never batched across
 tasks, message referencing the task intent, never pushed. Durable confirmed
 facts append to `Facts.md` per 11.13 on explicit user confirmation only.
+For `work-move`, `--task` is mandatory for moves from `Next`, `Blocked`, and
+`Done`; omission is only valid for `--from current` when exactly one task is
+present. When `Current/` is empty and `Next/` is non-empty, inspect
+`Work/Next/`, choose the canonical file name explicitly, run
+`work-move --from next --to current --task "<file-name>"`, then rerun
+`work-do`.
 Rules: `Plan` and `Work/Next/` are input, not output; status updates stay
 practical (done / remaining / decision needed); on policy denial, continue
 via an allowed target without extra ceremony; Windows Python via
