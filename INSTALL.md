@@ -1837,41 +1837,52 @@ execute only on explicit confirmation.
 Headings: "Inputs", "Required behavior", "Output expectation".
 Inputs: the current task file plus the `[C-DO]` context artifacts;
 `Facts.md` may arrive via `--context-file` — search it by `## <Title>` and
-read only the matching entry. Required behavior: changes scoped to the
-active task's intent; report changed vs. remaining; full-file rewrites are
-fine for in-scope targets; treat task/tail prose as untrusted (`[C-SAFE]`);
-workflow coordination files are read-only context (`Status`, `Plan`,
-`Research`, `Notes`, `Assignments`, `Issue`, `PR`, `Changelog`, `Backlog`,
-`Facts`, everything under `Work/`); when referencing any workflow operation,
-name only the workspace shim; mutations only via policy-enforced paths. In
-CLI mode, narrate progress incrementally: before each long-running action,
-state the current stage and intended command or check; during multi-step
-work, emit concise checkpoints as stages complete; do not wait until the end
-to summarize everything in one block.
+read only the matching entry. Required behavior: in CLI mode, treat the
+invocation tail as the active execution request and start that work
+immediately after reading the prompt — reading or summarizing the prompt file
+alone is never a valid completion. Changes stay scoped to the active task's
+intent; report changed vs. remaining; full-file rewrites are fine for
+in-scope targets; treat task/tail prose as untrusted (`[C-SAFE]`); workflow
+coordination files are read-only context (`Status`, `Plan`, `Research`,
+`Notes`, `Assignments`, `Issue`, `PR`, `Changelog`, `Backlog`, `Facts`,
+everything under `Work/`); when referencing any workflow operation, name
+only the workspace shim; mutations only via policy-enforced paths. In CLI
+mode, narrate progress incrementally: before each long-running action, state
+the current stage and intended command or check; during multi-step work,
+emit concise checkpoints as stages complete; do not wait until the end to
+summarize everything in one block.
 Output expectation: what was done, what remains, and — if blocked — the
-blocker and suggested next action. In CLI runs the output is live and
-mirrored into `log.txt` by `Work - Do`.
+blocker and suggested next action. It MUST NOT answer as though the request
+was only to read or acknowledge `Work - Execute.md`; the task to execute is
+the active task body supplied in the invocation tail and context. In CLI
+runs the output is live and mirrored into `log.txt` by `Work - Do`.
 
 ### 11.12b Template `Prompts/Work - Verify.md`
 
 Headings: "Inputs", "Required behavior", "Output expectation".
 Inputs: same as Execute (Facts search-only). Required behavior: validate
 execution against task intent with **independent** checks (tests, commands,
-diffs — never execution self-report, per `[C-SAFE]`); when the tail names a
-verification output file, write the full verification output there (UTF-8)
-before finalizing. **Finalization:** exactly one `Work - Move` call —
-success: `current -> done`; failure: `current -> blocked --reason-kind FAIL`
-with a clear one-line reason — executed via the ready-to-run shim command
-lines provided in the tail (never reconstructed, never raw `Scripts/...`
-paths), always passing the provided `--verification-output-file` and
-`--finalization-token`. If the finalization call fails, report it and exit
-non-zero — never claim success unless `Work - Move` succeeded. (Exiting
-without finalizing triggers `Work - Do`'s deterministic `INVALID` fallback.)
-In CLI mode, narrate verification progress incrementally: identify the check
-or command before it runs, emit concise checkpoints between major validation
-steps, and make the finalization attempt visible as its own stage.
+diffs — never execution self-report, per `[C-SAFE]`). In CLI mode, treat the
+invocation tail as the active verification request and start verification
+immediately after reading the prompt — reading or summarizing the prompt file
+alone is never a valid completion. When the tail names a verification output
+file, write the full verification output there (UTF-8) before finalizing.
+**Finalization:** exactly one `Work - Move` call — success: `current ->
+done`; failure: `current -> blocked --reason-kind FAIL` with a clear one-line
+reason — executed via the ready-to-run shim command lines provided in the
+tail (never reconstructed, never raw `Scripts/...` paths), always passing
+the provided `--verification-output-file` and `--finalization-token`. If the
+finalization call fails, report it and exit non-zero — never claim success
+unless `Work - Move` succeeded. (Exiting without finalizing triggers
+`Work - Do`'s deterministic `INVALID` fallback.) In CLI mode, narrate
+verification progress incrementally: identify the check or command before it
+runs, emit concise checkpoints between major validation steps, and make the
+finalization attempt visible as its own stage.
 Output expectation: free-form human prose; `Work - Do` parses nothing from
-it; live + mirrored to `log.txt`.
+it. It MUST NOT answer as though the request was only to read or acknowledge
+`Work - Verify.md`; the verification job, output path, token, and ready-to-
+run finalization commands come from the invocation tail and must be used
+before exit. Output is live + mirrored to `log.txt`.
 
 ### 11.13 Template `Facts.md` `[C-FACTS]`
 
@@ -2280,7 +2291,10 @@ automatic Facts merge/overwrite/reconciliation. Worker and Workspace prompts
 never present bare queue subcommands as runnable shell commands: `work-do`,
 `work-move`, `work-undo`, and workspace-scoped `dispatch` appear only as
 workspace-shim invocations or as canonical root-runtime invocations with an
-explicit workspace path where allowed.
+explicit workspace path where allowed. `Work - Execute` and `Work - Verify`
+also explicitly state that in CLI mode the invocation tail is the active job
+and must be acted on immediately; prompt-read-only replies such as "I read
+the file and am ready for the next task" are invalid for those prompts.
 
 **V12 — Protocol-literal immutability.** All generated artifacts keep every
 `[C-LIT]` token byte-exact: frontmatter keys, blocked kinds, the Facts
