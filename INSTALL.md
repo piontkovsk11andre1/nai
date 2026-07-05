@@ -831,13 +831,13 @@ critical section committed atomically before verifier dispatch.
      starting; verification timed out, failed, or finalized; fallback
      recovery starting; final reconciled outcome. These stage lines
      supplement live harness output; they do not replace it.
-   - **CLI task preview:** before each dispatcher call in CLI mode,
-     `Work - Do` MUST print a bounded preview of the stripped task body it is
-     about to pass as `--tail`. The preview is deterministic: print the full
-     body when it is at most 20 lines and at most 4000 bytes; otherwise print
-     the first 20 lines up to 4000 bytes, then one short translated
-     truncation line. For verifier dispatch, preview only the task-body
-     portion, not the generated token or finalization-command suffix.
+   - **CLI dispatch output:** for both the execution dispatch and the
+     verification dispatch, `Work - Do` MUST show two things in the CLI:
+     first, the full prompt payload it is sending to the worker via
+     `--tail`; second, the worker's live output stream as the agent runs.
+     Do not truncate, summarize, or shorten the printed task body. For the
+     verification dispatch, print only the task-body portion of the tail,
+     not the generated token or finalization-command suffix.
    - `execute-verify`: dispatch the execution worker with the workspace's
      `Prompts/Work - Execute.md`, the workspace path, mode, and tail;
      stream live and tee to `log.txt` under `work-do.execute`; non-zero exit
