@@ -1977,12 +1977,14 @@ step 8) before declaring completion.
 
 Bootstrap pattern is fixed (`[C-BOOT]`); only the surrounding command
 adapts, driven by the capability descriptor.
+Whenever possible, verify option flags against local CLI `--help` output
+before finalizing or using command patterns.
 
 ### 13.1 Opencode (canonical default)
 
 - CLI/unattended: `opencode run --thinking "<bootstrap>"`
-- TUI/interactive: `opencode --thinking --prompt "<bootstrap>"`
-- `--thinking` is required in both flows so `Work - Do` streams visible
+- TUI/interactive: `opencode --prompt "<bootstrap>"`
+- `--thinking` is required in CLI flow so `Work - Do` streams visible
   incremental output in real time.
 - Context attach: detect the attach flag at scaffold time from
   `opencode --help` (and subcommand help); record the result in the
