@@ -583,6 +583,10 @@ policy enforcement.
   parents) on first write. Callers that branch on directory existence —
   notably `Workspace - Create` step 1 — MUST perform the existence check
   before emitting any log line for that workspace.
+- **Archive-path rule:** for `Workspace - Remove`, once the archive
+  destination is chosen, every `workspace-archive.*` event is appended to
+  the archive destination's `log.txt`, not the source workspace's. Logging
+  MUST NOT recreate the source workspace path during or after archival.
 - `Work - Do` mirrors each streamed worker/verifier output line through this
   function (prefixes like `[worker] ...` / `[verifier] ...` allowed). This
   is a tee of visible output, never a protocol parser.
@@ -947,10 +951,12 @@ Behavior:
    **very first** action on the destination path — before any log line
    (see the `[C-LOG]` side-effect warning) or other side effect. Order:
    `dest.exists()` check → create destination → log.
-3. Copy every non-git, non-launcher child of `Workspaces/__template__/` into
-   the new workspace (launchers are regenerated in step 7).
-4. Discover template repos: every immediate subdirectory of `__template__`
-   containing a `.git` entry (file or directory).
+3. Discover template repos: every immediate subdirectory of `__template__`
+  containing a `.git` entry (file or directory).
+4. Copy every non-git, non-launcher child of `Workspaces/__template__/` into
+  the new workspace, **excluding** the directories discovered in step 3.
+  Template repo directories are attached only by step 5 and MUST NOT be
+  copied into the destination before `git worktree add` runs.
 5. Per repo, in order:
    - Require a clean working tree (`git status --porcelain` empty); dirty →
      abort the whole create, naming the repo, instructing commit/stash/
@@ -1008,9 +1014,11 @@ Behavior:
    options (commit / stash / discard / rerun with the flag).
 5. Destination: `Workspaces/__archive__/<name>`; if it exists, append
    `__YYYY-MM-DD_HHMMSS`.
-6. Move every non-repository child into the destination, preserving
+6. From this point onward, all `workspace-archive.*` log events are written
+  to the archive destination, never the source workspace.
+7. Move every non-repository child into the destination, preserving
    structure.
-7. Per repo, sequentially (snapshot then removal — not alternatives):
+8. Per repo, sequentially (snapshot then removal — not alternatives):
    1. *Snapshot (worktree repos only):* if the repo is a worktree pointer,
       is dirty, and `--include-uncommitted` was given, copy the working tree
       (excluding `.git`) into the destination under the repo name — before
@@ -1019,10 +1027,10 @@ Behavior:
    2. *Removal:* worktree pointer → `git worktree remove <dir>` from the
       primary repo (`--force` when `--include-uncommitted`); plain repo →
       move the entire directory (including `.git`) into the archive.
-8. `git worktree prune` once per unique primary; prune failures are
+9. `git worktree prune` once per unique primary; prune failures are
    warnings.
-9. Best-effort removal of the now-empty workspace directory.
-10. Never delete local or remote branches; never `git reset` / `git clean` /
+10. Best-effort removal of the now-empty workspace directory.
+11. Never delete local or remote branches; never `git reset` / `git clean` /
     any destructive history operation. Worktree removal and pruning are
     required.
 
