@@ -367,6 +367,9 @@ finalization command lines, and per-workspace launchers use the shim. Raw
 `Scripts/...` or `../../Scripts/...` paths are compatibility surfaces for
 manual root-level use and wrapper internals only; prompts and generated
 examples MUST NOT tell an AI to walk upward to find `Scripts/`.
+`workspace-create` is not a shim-scoped command: prompts and examples invoke
+it via the root runtime, never via a bare PATH command and never via a
+workspace-local shim.
 
 Shim behavior:
 
@@ -1553,6 +1556,12 @@ Headings: "Responsibilities", "Rules", "Notes".
   - Create workspaces via `workspace-create`, treating natural language as
     primary input: derive `--workspace` (path-safe single segment) and
     `--branch` explicitly for every call, without unnecessary follow-ups.
+    Creation is root-scoped: call the canonical runtime explicitly, not a
+    bare `workspace-create` command and not a workspace-local shim. Windows
+    example from the workflow root: `py "Scripts/Workflow.py" workspace-create
+    --workspace issue-12312 --branch "workspace/issue-12312"`. If the target
+    workspace path already exists, report that directly and stop; do not
+    search for shims, launchers, or alternate script entrypoints.
     Deterministic mapping examples: "work on issue 12312" → workspace
     `issue-12312`, branch `workspace/issue-12312`; "work on initial version"
     → `initial-version` / `workspace/initial-version`; "for branch
