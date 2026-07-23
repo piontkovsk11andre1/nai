@@ -12,54 +12,45 @@ installer is a specification rather than a binary, the same workflow
 materializes in your language, on your OS, in your scripting language, for
 your AI harness.
 
-The latest release includes a machine-readable `Manifest.json` as the single
-source of truth for the install, a built-in `doctor` health check, a `relink`
-capability that makes the whole directory relocation-proof, idempotent
-repair-mode reinstalls, and a spec rebuilt around stable contract IDs so every
-generated artifact is verifiable against the exact rule it implements.
+`Installation.md` is the machine-readable source of truth for the install. A
+small deterministic runtime owns workflow state, recovery, health checks, and
+safe relocation; agents stay focused on planning, repository work, and review.
+Every generated artifact is inventoried against the exact specification that
+created it, so a later repair can restore generated pieces without treating your
+work as scaffolding.
 
 ---
 
 ## 🚀 Install
 
 In an empty directory, open any AI coding agent (Claude Code, opencode,
-Codex, Copilot Chat, …) and send one message:
+Codex, Copilot Chat, ...) and give it the exact `INSTALL.md` bytes from this
+repository:
 
-> Please read <https://raw.githubusercontent.com/piontkovsk11andre1/nai/main/INSTALL.md>
-> and implement the workflow.
+> Read `INSTALL.md` and implement the workflow in this directory.
 
 That agent acts as a **scaffolder**: it asks a few questions (natural
 language, OS, scripting language, AI harness) and produces the files. The
 directory it leaves behind is a self-contained distribution pinned to your
-platform and harness — and recorded in `Manifest.json`, so the tooling
-always knows what it was built for.
+platform, harness, and exact specification digest. Those choices and the
+generated artifact inventory are recorded in `Installation.md`.
 
-Moved the directory to another path or machine? Nai can relink itself to the
-new root. Suspect something drifted — a deleted launcher, a stale lock, a
-leftover verifier token? Nai can audit itself and apply safe repairs.
+Moved the directory to another path? Nai can relink itself to the new root.
+Suspect something drifted — a deleted launcher, a stale lock, or interrupted
+work? Nai can audit itself and apply safe repairs.
 
-Rerunning the installer against an existing Nai root is a **repair**, not a
-failure: it regenerates only what is missing or drifted and never touches
-your workspaces, repos, facts, or installation record.
+Running the same exact specification against an existing Nai root is a
+**repair**, not a fresh install: it regenerates only eligible missing or drifted
+generated content and preserves workspaces, repositories, facts, and user-owned
+files.
 
-The first time you open the top-level launcher it runs a one-off
-**Installation Agent** that wires up your actual repos and naming
-conventions, asks about any add-ons or tweaks you want, and then creates
-`Installation.md`. From then on, the same static launcher detects that file
-and opens the day-to-day **Workspace Agent**. As part of installation
-checks, the installer verifies that the harness can start, that dispatch is
-healthy, and that the full installation passes its built-in audit before
-marking installation complete.
-
-## Installation Record Audit
-
-- Scaffolded baseline: `Installation.md` is absent; `Manifest.json` is
-  present.
-- Completion signal: the Installation Agent creates `Installation.md` after
-  checks pass and user confirmation.
-- Launcher behavior: the top-level launcher is static; file presence selects
-  `Workspace Agent`, file absence selects `Installation Agent`. The launcher
-  itself is never rewritten.
+The fresh scaffold creates `Installation.md` in `pending` state. The first time
+you open the top-level launcher it starts the **Installation Agent**, which
+confirms harnesses, reusable repository sources, naming conventions, and the
+customizations you want. After validation and your confirmation, the runtime
+marks the installation `complete`; the same static launcher then opens the
+day-to-day **Workspace Agent**. Selection is based on validated installation
+status and recovery evidence, never merely on whether a file exists.
 
 After that, just open the top-level launcher again and ask the **Workspace
 Agent** to walk you through the workflow — it will show you how to create a
@@ -124,14 +115,14 @@ still matter:
 A directory like this, generated on first install:
 
 ```
-Open Agent.(cmd|command|desktop)   top-level launcher (static, marker-gated)
-Manifest.json                      machine-readable install record
-Installation.md                    created after install completion
+Open Agent.(cmd|command|desktop)   top-level launcher (static, status-gated)
+Installation.md                    machine-readable install record
+.nai/                              state, locks, operations, journals, scratch
 Prompts/
   Installation Agent.md
   Workspace Agent.md
 Scripts/
-  Workflow.<ext>                   canonical runtime (dispatch, work-*, doctor, relink)
+  Workflow.<ext>                   canonical runtime and orchestration
   Dispatcher.<ext>                 dispatcher
   Policy.<ext>                     shared runtime file policy + locks
   Workspace - Create.<ext>
@@ -140,19 +131,20 @@ Scripts/
   Work - Move.<ext>
   Work - Undo.<ext>
   Logger.<ext>                     shared logging utility
-  Workers/Default.<ext>            AI harness wrapper (capability-descriptor driven)
+  Workers/
+    Default.<ext>                  AI harness wrapper (capability-descriptor driven)
 Workspaces/
   Backlog.md                       global backlog (append-only sync under workflow-root lock)
   Changelog.md                     global changelog (append-only sync under workflow-root lock)
   __template__/                    copied for every new workspace
     Scripts/
       Workflow.<ext>               workspace-local shim to the root runtime
-    1. Open Integration Agent.<launcher>    per-agent launchers
-    2. Open Research Agent.<launcher>
-    3. Open Planner Agent.<launcher>
-    4. Open Worker Agent.<launcher>
-    5. Open Reviewer Agent.<launcher>
-    Workspace.md                   structure, naming, branch conventions
+    1. Open Integration Agent.<launcher-ext>    per-agent launchers
+    2. Open Research Agent.<launcher-ext>
+    3. Open Planner Agent.<launcher-ext>
+    4. Open Worker Agent.<launcher-ext>
+    5. Open Reviewer Agent.<launcher-ext>
+    Workspace.md                   workspace identity and current run
     Assignments.md                 worker preference notes
     Backlog.md                     per-workspace backlog
     Changelog.md                   per-workspace changelog
@@ -162,8 +154,14 @@ Workspaces/
     Notes.md                       free-form notes
     Plan.md                        plan, risks, verification strategy
     PR.md                          pull request draft
-    Research.md                    research log (edited in place)
+    Research.md                    question-driven research log
     Status.md                      Part/Expected/Current/% table
+    .nai/
+      State.md
+      Locks/
+      Operations/
+      Transactions/
+      Scratch/
     Prompts/                       per-workspace agent prompts
       Integration Agent.md
       Research Agent.md
@@ -180,10 +178,11 @@ Workspaces/
   __archive__/                     finished workspaces land here
 ```
 
-Each new workspace (one per ticket / feature / experiment) is a copy of
-`__template__` with git worktrees attached for the repos you work on, plus
-its own shim, prompts, plan, status, work queue, and a durable `Facts.md`
-that carries confirmed project facts across tasks.
+Each new workspace (one per ticket / feature / experiment) begins as a Git-free
+coordination space. Integration then sets up and registers the repositories the
+work actually needs, using worktrees, clones, new repositories, existing
+checkouts, or no repository at all. The workspace keeps its own shim, prompts,
+plan, status, work queue, and durable `Facts.md`.
 
 ---
 
@@ -196,8 +195,8 @@ entry points are:
   each workspace ships five launchers (`.cmd` on Windows, `.command` on
   macOS, `.desktop` on Linux) that sit in Explorer / Finder / your file
   manager like any other app — pin them, dock them, desktop them.
-  Double-clicking opens that role's session directly, no orchestrator in
-  between.
+  Double-clicking opens a conversational role session. Mutating work routes
+  through the Workspace Agent so prerequisites and run authority are checked.
 - **From your editor.** Ask an AI agent to integrate Nai with your editor
   (VS Code, JetBrains, Zed, …) — it knows the layout and will surface every
   knob for the editor you use: tasks, run configs, status-bar buttons, a
@@ -227,17 +226,17 @@ work drifts away from the target.
 A few things that make this different from "just prompting an agent":
 
 - **Hard execute/verify loop.** Verification is a separate session with its
-  own prompt, and finalization happens through `Work - Move`, gated by a
-  per-run finalization token so only the verifier that ran can finalize.
+  own prompt, and finalization happens through a prepared runtime command bound
+  to the active task, revision, verification run, and finite lease.
   Success moves the task to `Done`, failure to `Blocked`, and the verifier's
   output is appended into the task file either way. If verifier dispatch
   fails or exits without finalizing, `Work - Do` performs a deterministic
   fallback to `Blocked` (`DISPATCHER` / `INVALID`) instead of leaving the
   task silently stuck.
-- **Self-diagnosing.** `doctor` audits the manifest, scripts, launchers,
-  queue integrity, stale locks, and leftover verifier tokens on demand, with
+- **Self-diagnosing.** `system doctor` audits the installation record, scripts,
+  launchers, queue integrity, locks, leases, journals, and recovery evidence, with
   a safe-repair mode for non-destructive fixes. `relink` survives
-  moves, renames, and machine migrations cleanly.
+  moves and renames cleanly.
 - **Fast, explicit handoffs.** The five workspace roles switch in the same
   chat on request, so you redirect flow without losing context; launchers
   still exist when you want a fresh window.
@@ -256,10 +255,10 @@ A few things that make this different from "just prompting an agent":
   entries, never rewrites. Agents grep it on demand instead of re-asking.
   There is no automatic global facts merge: before archival, the Workspace
   Agent asks what to preserve and appends it explicitly where you choose.
-- **Workspace isolation via git worktrees.** Multiple workspaces point at
-  the same repos on different branches without stepping on each other —
-  with strict submodule handling and transactional creation (a failed
-  create rolls itself back completely).
+- **Workspace isolation without a Git assumption.** A workspace can coordinate
+  no repository, one repository, or several. Git worktrees keep shared repos on
+  separate branches, while clones, new repos, and existing checkouts are also
+  explicit registered choices.
 - **Archive, don't delete.** Workspaces are never wiped — when you're done,
   the Integration Agent syncs backlog/changelog upstream and the workspace
   moves whole into `__archive__/`.
@@ -285,14 +284,14 @@ A few things that make this different from "just prompting an agent":
 - **Status / backlog / changelog formats.** Plain markdown used by agents,
   not parsed by scripts — reshape freely.
 - **Natural language, OS, scripting language, harness.** All chosen at
-  install time and recorded in `Manifest.json`; the same prompts and
+  install time and recorded in `Installation.md`; the same prompts and
   contracts work for any combination, including localized file names via a
   consistent mapping table.
 - **Anything else.** The Installation Agent asks for add-ons, tweaks, or
   free-form comments before finalizing. Add-ons are applied by editing the
   existing prompts, framework notes, worker wrappers, or conventions that
   own the behavior; new top-level scripts and roles stay outside the
-  baseline manifest unless you deliberately fork the workflow.
+  baseline inventory unless you deliberately fork the workflow.
 
 ---
 
@@ -300,8 +299,8 @@ A few things that make this different from "just prompting an agent":
 
 Pick a project you are already working on and try a single round-trip:
 
-1. Install (or copy) Nai into a fresh directory next to (not inside) the
-   repo, and let the Installation Agent attach the repo to the template.
+1. Install Nai into a fresh directory next to (not inside) the repo, and confirm
+   the defaults you want with the Installation Agent.
 2. Create a workspace for one small, reversible task. Point the Workspace
    Agent at your issue tracker, or just ask it to write the task into
    `Issue.md`.
