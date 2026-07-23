@@ -27,7 +27,7 @@ In an empty directory, open any AI coding agent (Claude Code, opencode,
 Codex, Copilot Chat, ...) and give it the exact `INSTALL.md` bytes from this
 repository:
 
-> Read `INSTALL.md` and implement the workflow in this directory.
+> Read https://github.com/piontkovsk11andre1/nai/blob/main/INSTALL.md and implement the workflow in this directory.
 
 That agent acts as a **scaffolder**: it asks a few questions (natural
 language, OS, scripting language, AI harness) and produces the files. The
